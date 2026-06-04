@@ -106,6 +106,9 @@ func _draw_building_symbol(rect: Rect2, building: Dictionary) -> void:
 		var end := center + dir * 9.0
 		draw_line(center - dir * 5.0, end, Config.COLOR_BUILDING_BORDER, 2.5)
 		draw_circle(end, 3.0, Config.COLOR_BUILDING_BORDER)
+		if tool == Config.TOOL_INSERTER and not Dictionary(building.get("held", {})).is_empty():
+			var progress: float = clampf(float(building.get("progress", 0.0)), 0.0, 1.0)
+			draw_circle(center + dir * lerpf(-6.0, 9.0, progress), 4.0, Config.COLOR_ITEM_ORE)
 		return
 
 	if tool == Config.TOOL_STORAGE:

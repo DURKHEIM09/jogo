@@ -38,6 +38,8 @@ func tick(delta: float) -> void:
 
 		if building_type == Config.TOOL_MINER:
 			changed_this_tick = _update_miner(cell, building, dt) or changed_this_tick
+		elif building_type == Config.TOOL_INSERTER:
+			changed_this_tick = _update_inserter(cell, building, dt) or changed_this_tick
 
 	changed_this_tick = _update_items(dt) or changed_this_tick
 
@@ -96,6 +98,9 @@ func _try_place(cell: Vector2i) -> Dictionary:
 		"timer": 0.0,
 		"input_ore": 0,
 		"output_parts": 0,
+		"output_queue": [],
+		"held": {},
+		"progress": 0.0,
 		"powered": true,
 	}
 
@@ -169,6 +174,130 @@ func _spawn_item(cell: Vector2i, dir: int, item_type: String) -> void:
 		"age": 0.0,
 	}
 	items.append(item)
+
+func _update_inserter(cell: Vector2i, building: Dictionary, dt: float) -> bool:
+	if not bool(building.get("powered", true)):
+		return false
+
+	var held: Dictionary = building.get("held", {})
+	if held.is_empty():
+		var picked := _pick_for_inserter(cell, int(building.get("dir", 0)))
+		if picked.is_empty():
+			return false
+
+		building["held"] = picked
+		building["progress"] = 0.0
+		buildings[cell] = building
+		return true
+
+	building["progress"] = float(building.get("progress", 0.0)) + dt * Config.INSERTER_SPEED
+	if float(building["progress"]) < 1.0:
+		buildings[cell] = building
+		return true
+
+	if _drop_from_inserter(cell, int(building.get("dir", 0)), held):
+		building["held"] = {}
+		building["progress"] = 0.0
+	else:
+		building["progress"] = 0.86
+
+	buildings[cell] = building
+	return true
+
+func _pick_for_inserter(cell: Vector2i, dir: int) -> Dictionary:
+	var pickup_cell := cell - Config.direction_offset(dir)
+	if not _is_cell_in_bounds(pickup_cell):
+		return {}
+
+	var source := get_building(pickup_cell)
+	if String(source.get("type", "")) == Config.TOOL_ASSEMBLER and int(source.get("output_parts", 0)) > 0:
+		var output_queue: Array = source.get("output_queue", [])
+		while output_queue.size() < int(source.get("output_parts", 0)):
+			output_queue.append(_make_item("part"))
+
+		var picked_from_assembler: Dictionary = output_queue.pop_front() if not output_queue.is_empty() else _make_item("part")
+		source["output_queue"] = output_queue
+		source["output_parts"] = output_queue.size()
+		buildings[pickup_cell] = source
+		return picked_from_assembler
+
+	var item_index := _find_item_index_at_cell(pickup_cell)
+	if item_index < 0:
+		return {}
+
+	var picked: Dictionary = items[item_index]
+	items.remove_at(item_index)
+	return _normalize_item(picked)
+
+func _drop_from_inserter(cell: Vector2i, dir: int, held_item: Dictionary) -> bool:
+	var drop_cell := cell + Config.direction_offset(dir)
+	if not _is_cell_in_bounds(drop_cell):
+		return false
+
+	var target := get_building(drop_cell)
+	var target_type := String(target.get("type", ""))
+	if target_type == "":
+		return false
+
+	var held := _normalize_item(held_item)
+	var item_type := String(held.get("type", "ore"))
+
+	if target_type == Config.TOOL_BELT:
+		if _item_count_at_cell(drop_cell) >= Config.BELT_CELL_ITEM_CAP:
+			return false
+		held["cell"] = drop_cell
+		held["dir"] = int(target.get("dir", 0))
+		held["progress"] = 0.12
+		held["age"] = 0.0
+		items.append(held)
+		return true
+
+	if target_type == Config.TOOL_ASSEMBLER and item_type == "ore" and int(target.get("input_ore", 0)) < 8:
+		target["input_ore"] = int(target.get("input_ore", 0)) + 1
+		buildings[drop_cell] = target
+		return true
+
+	return false
+
+func _find_item_index_at_cell(cell: Vector2i) -> int:
+	for index in range(items.size()):
+		var item: Dictionary = items[index]
+		var item_cell: Vector2i = item.get("cell", Vector2i(-1, -1))
+		if item_cell == cell:
+			return index
+	return -1
+
+func _item_count_at_cell(cell: Vector2i) -> int:
+	var count := 0
+	for item in items:
+		var item_cell: Vector2i = item.get("cell", Vector2i(-1, -1))
+		if item_cell == cell:
+			count += 1
+	return count
+
+func _normalize_item(item: Dictionary) -> Dictionary:
+	return {
+		"type": String(item.get("type", "ore")),
+		"tier": int(item.get("tier", 1)),
+		"quality": float(item.get("quality", 1.0)),
+		"premium": bool(item.get("premium", false)),
+		"cell": item.get("cell", Vector2i(-1, -1)),
+		"dir": int(item.get("dir", 0)),
+		"progress": float(item.get("progress", 0.0)),
+		"age": float(item.get("age", 0.0)),
+	}
+
+func _make_item(item_type: String) -> Dictionary:
+	return {
+		"type": item_type,
+		"tier": 1,
+		"quality": 1.0,
+		"premium": false,
+		"cell": Vector2i(-1, -1),
+		"dir": 0,
+		"progress": 0.0,
+		"age": 0.0,
+	}
 
 func _update_items(dt: float) -> bool:
 	var changed_this_tick := false

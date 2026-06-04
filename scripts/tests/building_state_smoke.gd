@@ -76,6 +76,23 @@ func _ready() -> void:
 	if not _expect(_has_item_at(state, belt_cell), "belt did not move ore item into its cell"):
 		return
 
+	var inserter_cell := belt_cell + Config.direction_offset(0)
+	var drop_cell := inserter_cell + Config.direction_offset(0)
+
+	state.select_tool(Config.TOOL_INSERTER)
+	var placed_inserter: Dictionary = state.try_apply_tool(inserter_cell)
+	if not _expect(bool(placed_inserter["ok"]), "inserter placement failed"):
+		return
+
+	state.select_tool(Config.TOOL_BELT)
+	var placed_drop_belt: Dictionary = state.try_apply_tool(drop_cell)
+	if not _expect(bool(placed_drop_belt["ok"]), "drop belt placement failed"):
+		return
+
+	_advance(state, 1.2)
+	if not _expect(_has_item_at(state, drop_cell), "inserter did not move item to drop belt"):
+		return
+
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
 
