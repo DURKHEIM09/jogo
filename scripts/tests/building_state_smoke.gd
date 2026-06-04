@@ -47,7 +47,9 @@ func _ready() -> void:
 	while state.selected_dir != 0:
 		state.rotate_selection()
 
-	var ore_cell: Vector2i = state.get_resources()[0]["cell"]
+	var ore_cell: Vector2i = _first_ore_cell_with_right_room(state, 8)
+	if not _expect(ore_cell != Vector2i(-1, -1), "could not find ore cell with enough right-side room"):
+		return
 	var placed_miner: Dictionary = state.try_apply_tool(ore_cell)
 	if not _expect(bool(placed_miner["ok"]), "miner placement on ore failed"):
 		return
@@ -120,6 +122,25 @@ func _ready() -> void:
 	if not _expect(float(first_part.get("quality", 0.0)) >= Config.MIN_QUALITY, "part quality below minimum"):
 		return
 
+	var output_inserter_cell := assembler_cell + Config.direction_offset(0)
+	var storage_cell := output_inserter_cell + Config.direction_offset(0)
+
+	state.select_tool(Config.TOOL_INSERTER)
+	var placed_output_inserter: Dictionary = state.try_apply_tool(output_inserter_cell)
+	if not _expect(bool(placed_output_inserter["ok"]), "output inserter placement failed"):
+		return
+
+	state.select_tool(Config.TOOL_STORAGE)
+	var placed_storage: Dictionary = state.try_apply_tool(storage_cell)
+	if not _expect(bool(placed_storage["ok"]), "storage placement failed"):
+		return
+
+	_advance(state, 2.0)
+	if not _expect(state.parts >= 1, "storage did not receive produced part"):
+		return
+	if not _expect(state.get_parts_per_minute() >= 1, "parts per minute rate did not update"):
+		return
+
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
 
@@ -136,6 +157,13 @@ func _first_empty_resource_cell(state) -> Vector2i:
 			var cell := Vector2i(x, y)
 			if not state.has_resource(cell):
 				return cell
+	return Vector2i(-1, -1)
+
+func _first_ore_cell_with_right_room(state, right_room: int) -> Vector2i:
+	for resource in state.get_resources():
+		var cell: Vector2i = resource.get("cell", Vector2i(-1, -1))
+		if cell.x + right_room < Config.GRID_COLUMNS:
+			return cell
 	return Vector2i(-1, -1)
 
 func _advance(state, seconds: float) -> void:

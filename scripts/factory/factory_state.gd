@@ -13,6 +13,10 @@ var buildings := {}
 var resources := {}
 var items := []
 var rng := RandomNumberGenerator.new()
+var simulation_time := 0.0
+var parts := 0
+var ore_stored := 0
+var produced_times := []
 
 func _init() -> void:
 	rng.randomize()
@@ -31,6 +35,7 @@ func rotate_selection() -> void:
 
 func tick(delta: float) -> void:
 	var dt: float = minf(delta, Config.SIMULATION_DT_CLAMP)
+	simulation_time += dt
 	var changed_this_tick := false
 
 	for key in buildings.keys():
@@ -48,6 +53,7 @@ func tick(delta: float) -> void:
 	changed_this_tick = _update_items(dt) or changed_this_tick
 
 	if changed_this_tick:
+		_update_rate_window()
 		emit_signal("changed")
 
 func try_apply_tool(cell: Vector2i) -> Dictionary:
@@ -73,6 +79,10 @@ func get_resource_amount(cell: Vector2i) -> int:
 	if not resources.has(cell):
 		return 0
 	return int(resources[cell].get("amount", 0))
+
+func get_parts_per_minute() -> int:
+	_update_rate_window()
+	return produced_times.size()
 
 func get_building(cell: Vector2i) -> Dictionary:
 	if not buildings.has(cell):
@@ -261,6 +271,13 @@ func _drop_from_inserter(cell: Vector2i, dir: int, held_item: Dictionary) -> boo
 		buildings[drop_cell] = target
 		return true
 
+	if target_type == Config.TOOL_STORAGE:
+		if item_type == "part":
+			_store_part(held)
+		elif item_type == "ore":
+			ore_stored += 1
+		return true
+
 	return false
 
 func _update_assembler(cell: Vector2i, building: Dictionary, dt: float) -> bool:
@@ -358,6 +375,14 @@ func _nearby_building_count(cell: Vector2i, building_type: String, radius: int) 
 			count += 1
 
 	return count
+
+func _store_part(_part: Dictionary) -> void:
+	parts += 1
+	produced_times.append(simulation_time)
+
+func _update_rate_window() -> void:
+	var cutoff := simulation_time - 60.0
+	produced_times = produced_times.filter(func(stamp): return float(stamp) >= cutoff)
 
 func _update_items(dt: float) -> bool:
 	var changed_this_tick := false

@@ -83,9 +83,11 @@ func _update_hud() -> void:
 		return
 
 	var selected_tool := String(factory_state.selected_tool)
-	hud_label.text = "Creditos: %d   Itens: %d   Ferramenta: %s $%d   %s" % [
+	hud_label.text = "Creditos: %d   Pecas: %d   Itens: %d   Taxa: %d/min   Ferramenta: %s $%d   %s" % [
 		int(factory_state.money),
+		int(factory_state.parts),
 		factory_state.get_items().size(),
+		factory_state.get_parts_per_minute(),
 		Config.tool_label(selected_tool),
 		Config.tool_cost(selected_tool),
 		last_action,
