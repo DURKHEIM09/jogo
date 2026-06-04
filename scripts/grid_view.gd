@@ -42,6 +42,7 @@ func _draw() -> void:
 
 	draw_rect(Rect2(Vector2.ZERO, grid_size), Config.COLOR_GRID_FILL_A)
 	_draw_checker_cells()
+	_draw_resources()
 	_draw_buildings()
 	_draw_selection()
 	_draw_grid_lines(grid_size)
@@ -52,6 +53,33 @@ func _draw_checker_cells() -> void:
 			if (x + y) % 2 == 0:
 				continue
 			draw_rect(_cell_rect(Vector2i(x, y)), Config.COLOR_GRID_FILL_B)
+
+func _draw_resources() -> void:
+	if factory_state == null:
+		return
+
+	for resource in factory_state.get_resources():
+		var cell: Vector2i = resource.get("cell", INVALID_CELL)
+		if not _is_valid_cell(cell):
+			continue
+
+		var rect := _cell_rect(cell).grow(-4.0)
+		draw_rect(rect, Config.COLOR_ORE_FILL)
+		draw_rect(rect, Config.COLOR_ORE_GLOW, false, 1.0)
+		_draw_resource_dots(rect)
+
+func _draw_resource_dots(rect: Rect2) -> void:
+	var dot_radius: float = maxf(1.4, float(Config.CELL_SIZE) * 0.07)
+	var positions: Array[Vector2] = [
+		Vector2(0.32, 0.34),
+		Vector2(0.68, 0.34),
+		Vector2(0.32, 0.68),
+		Vector2(0.68, 0.68),
+	]
+
+	for ratio in positions:
+		var ratio_vec: Vector2 = ratio
+		draw_circle(rect.position + Vector2(rect.size.x * ratio_vec.x, rect.size.y * ratio_vec.y), dot_radius, Config.COLOR_ORE_DOT)
 
 func _draw_buildings() -> void:
 	if factory_state == null:

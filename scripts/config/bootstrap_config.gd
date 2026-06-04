@@ -20,10 +20,15 @@ const COLOR_TOOL_DISABLED := Color(0.475, 0.514, 0.553, 1.0)
 const COLOR_BUILDING_BORDER := Color(0.855, 0.894, 0.925, 0.74)
 const COLOR_TEXT := Color(0.914, 0.941, 0.965, 1.0)
 const COLOR_TEXT_MUTED := Color(0.651, 0.702, 0.753, 1.0)
+const COLOR_ORE_FILL := Color(0.780, 0.478, 0.243, 0.24)
+const COLOR_ORE_DOT := Color(0.780, 0.478, 0.243, 1.0)
+const COLOR_ORE_GLOW := Color(0.957, 0.714, 0.302, 0.38)
 
 const INITIAL_MONEY := 320
 const BUILDING_REFUND_RATE := 0.45
 const DIRECTION_COUNT := 4
+const ORE_BASE_AMOUNT := 800
+const ORE_AMOUNT_VARIANCE := 420
 
 const TOOL_BELT := "belt"
 const TOOL_INSERTER := "inserter"
@@ -139,3 +144,10 @@ static func direction_vector(dir: int) -> Vector2:
 			return Vector2.LEFT
 		_:
 			return Vector2.UP
+
+static func ore_patch_specs() -> Array:
+	return [
+		{"center": Vector2(0.22, 0.24), "radius": Vector2i(4, 6)},
+		{"center": Vector2(0.76, 0.66), "radius": Vector2i(4, 5)},
+		{"center": Vector2(0.35, 0.78), "radius": Vector2i(3, 4)},
+	]
