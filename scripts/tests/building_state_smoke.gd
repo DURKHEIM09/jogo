@@ -93,6 +93,33 @@ func _ready() -> void:
 	if not _expect(_has_item_at(state, drop_cell), "inserter did not move item to drop belt"):
 		return
 
+	var feed_inserter_cell := drop_cell + Config.direction_offset(0)
+	var assembler_cell := feed_inserter_cell + Config.direction_offset(0)
+
+	state.select_tool(Config.TOOL_INSERTER)
+	var placed_feed_inserter: Dictionary = state.try_apply_tool(feed_inserter_cell)
+	if not _expect(bool(placed_feed_inserter["ok"]), "feed inserter placement failed"):
+		return
+
+	state.select_tool(Config.TOOL_ASSEMBLER)
+	var placed_assembler: Dictionary = state.try_apply_tool(assembler_cell)
+	if not _expect(bool(placed_assembler["ok"]), "assembler placement failed"):
+		return
+
+	_advance(state, 12.0)
+	var assembler: Dictionary = state.get_building(assembler_cell)
+	if not _expect(int(assembler.get("output_parts", 0)) >= 1, "assembler did not produce part"):
+		return
+
+	var output_queue: Array = assembler.get("output_queue", [])
+	if not _expect(not output_queue.is_empty(), "assembler output queue missing part"):
+		return
+	var first_part: Dictionary = output_queue[0]
+	if not _expect(String(first_part.get("type", "")) == "part", "assembler output is not part"):
+		return
+	if not _expect(float(first_part.get("quality", 0.0)) >= Config.MIN_QUALITY, "part quality below minimum"):
+		return
+
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
 

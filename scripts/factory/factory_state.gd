@@ -12,8 +12,10 @@ var selected_dir := 0
 var buildings := {}
 var resources := {}
 var items := []
+var rng := RandomNumberGenerator.new()
 
 func _init() -> void:
+	rng.randomize()
 	_generate_resources()
 
 func select_tool(tool: String) -> bool:
@@ -40,6 +42,8 @@ func tick(delta: float) -> void:
 			changed_this_tick = _update_miner(cell, building, dt) or changed_this_tick
 		elif building_type == Config.TOOL_INSERTER:
 			changed_this_tick = _update_inserter(cell, building, dt) or changed_this_tick
+		elif building_type == Config.TOOL_ASSEMBLER:
+			changed_this_tick = _update_assembler(cell, building, dt) or changed_this_tick
 
 	changed_this_tick = _update_items(dt) or changed_this_tick
 
@@ -252,12 +256,42 @@ func _drop_from_inserter(cell: Vector2i, dir: int, held_item: Dictionary) -> boo
 		items.append(held)
 		return true
 
-	if target_type == Config.TOOL_ASSEMBLER and item_type == "ore" and int(target.get("input_ore", 0)) < 8:
+	if target_type == Config.TOOL_ASSEMBLER and item_type == "ore" and int(target.get("input_ore", 0)) < Config.ASSEMBLER_INPUT_CAP:
 		target["input_ore"] = int(target.get("input_ore", 0)) + 1
 		buildings[drop_cell] = target
 		return true
 
 	return false
+
+func _update_assembler(cell: Vector2i, building: Dictionary, dt: float) -> bool:
+	if not bool(building.get("powered", true)):
+		return false
+
+	var output_queue: Array = building.get("output_queue", [])
+	building["output_parts"] = output_queue.size()
+
+	if int(building.get("input_ore", 0)) < 2:
+		var previous_timer := float(building.get("timer", 0.0))
+		building["timer"] = maxf(0.0, previous_timer - dt * 0.5)
+		buildings[cell] = building
+		return float(building["timer"]) != previous_timer
+
+	building["timer"] = float(building.get("timer", 0.0)) + dt
+	if float(building["timer"]) < Config.ASSEMBLER_BUILD_TIME:
+		buildings[cell] = building
+		return false
+
+	if output_queue.size() >= Config.ASSEMBLER_OUTPUT_CAP:
+		buildings[cell] = building
+		return false
+
+	building["timer"] = float(building["timer"]) - Config.ASSEMBLER_BUILD_TIME
+	building["input_ore"] = int(building.get("input_ore", 0)) - 2
+	output_queue.append(_make_item("part", _roll_part_quality(cell, building)))
+	building["output_queue"] = output_queue
+	building["output_parts"] = output_queue.size()
+	buildings[cell] = building
+	return true
 
 func _find_item_index_at_cell(cell: Vector2i) -> int:
 	for index in range(items.size()):
@@ -287,17 +321,43 @@ func _normalize_item(item: Dictionary) -> Dictionary:
 		"age": float(item.get("age", 0.0)),
 	}
 
-func _make_item(item_type: String) -> Dictionary:
+func _make_item(item_type: String, quality := 1.0) -> Dictionary:
 	return {
 		"type": item_type,
 		"tier": 1,
-		"quality": 1.0,
-		"premium": false,
+		"quality": quality,
+		"premium": item_type == "part" and quality >= Config.PREMIUM_THRESHOLD,
 		"cell": Vector2i(-1, -1),
 		"dir": 0,
 		"progress": 0.0,
 		"age": 0.0,
 	}
+
+func _roll_part_quality(cell: Vector2i, building: Dictionary) -> float:
+	var setup_quality := _get_setup_quality(cell, building)
+	var average := Config.BASE_QUALITY_MU * setup_quality
+	var spread := Config.BASE_QUALITY_SIGMA / setup_quality
+	return clampf(rng.randfn(average, spread), Config.MIN_QUALITY, Config.MAX_QUALITY)
+
+func _get_setup_quality(cell: Vector2i, building: Dictionary) -> float:
+	var power_bonus := 0.04 if bool(building.get("powered", true)) else 0.0
+	var storage_bonus := 0.04 if _nearby_building_count(cell, Config.TOOL_STORAGE, 3) > 0 else 0.0
+	var inserter_bonus := 0.08 if _nearby_building_count(cell, Config.TOOL_INSERTER, 2) >= 2 else 0.0
+	return clampf(1.0 + power_bonus + storage_bonus + inserter_bonus, 0.8, 1.45)
+
+func _nearby_building_count(cell: Vector2i, building_type: String, radius: int) -> int:
+	var count := 0
+	for key in buildings.keys():
+		var candidate_cell: Vector2i = key
+		var candidate: Dictionary = buildings[candidate_cell]
+		if String(candidate.get("type", "")) != building_type:
+			continue
+
+		var distance := absi(candidate_cell.x - cell.x) + absi(candidate_cell.y - cell.y)
+		if distance <= radius:
+			count += 1
+
+	return count
 
 func _update_items(dt: float) -> bool:
 	var changed_this_tick := false

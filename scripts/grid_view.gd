@@ -115,6 +115,8 @@ func _draw_building_symbol(rect: Rect2, building: Dictionary) -> void:
 		draw_rect(Rect2(center - Vector2(7.0, 7.0), Vector2(14.0, 14.0)), Config.COLOR_BUILDING_BORDER, false, 2.0)
 	elif tool == Config.TOOL_GENERATOR:
 		draw_circle(center, 7.0, Config.COLOR_BUILDING_BORDER)
+	elif tool == Config.TOOL_ASSEMBLER:
+		_draw_assembler_counters(center, building)
 
 func _draw_items() -> void:
 	if factory_state == null:
@@ -129,7 +131,7 @@ func _draw_items() -> void:
 		var dir := Config.direction_vector(int(item.get("dir", 0)))
 		var progress: float = clampf(float(item.get("progress", 0.0)), 0.0, 1.0)
 		var center := rect.get_center() + dir * float(Config.CELL_SIZE) * progress
-		draw_circle(center, 5.0, Config.COLOR_ITEM_ORE)
+		draw_circle(center, 5.0, _item_color(item))
 		draw_circle(center, 7.0, Config.COLOR_ORE_GLOW)
 
 func _draw_selection() -> void:
@@ -185,3 +187,17 @@ func _is_valid_cell(cell: Vector2i) -> bool:
 		and cell.x < Config.GRID_COLUMNS
 		and cell.y < Config.GRID_ROWS
 	)
+
+func _draw_assembler_counters(center: Vector2, building: Dictionary) -> void:
+	var input_count: int = min(4, int(building.get("input_ore", 0)))
+	for index in range(input_count):
+		draw_circle(center + Vector2(-9.0 + float(index) * 6.0, 7.0), 2.0, Config.COLOR_ITEM_ORE)
+
+	var output_count: int = min(3, int(building.get("output_parts", 0)))
+	for index in range(output_count):
+		draw_circle(center + Vector2(-6.0 + float(index) * 6.0, -7.0), 2.4, Config.COLOR_ITEM_PART)
+
+func _item_color(item: Dictionary) -> Color:
+	if String(item.get("type", "")) == "part":
+		return Config.COLOR_ITEM_PREMIUM if bool(item.get("premium", false)) else Config.COLOR_ITEM_PART
+	return Config.COLOR_ITEM_ORE
