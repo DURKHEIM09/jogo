@@ -39,6 +39,8 @@ func tick(delta: float) -> void:
 		if building_type == Config.TOOL_MINER:
 			changed_this_tick = _update_miner(cell, building, dt) or changed_this_tick
 
+	changed_this_tick = _update_items(dt) or changed_this_tick
+
 	if changed_this_tick:
 		emit_signal("changed")
 
@@ -167,6 +169,62 @@ func _spawn_item(cell: Vector2i, dir: int, item_type: String) -> void:
 		"age": 0.0,
 	}
 	items.append(item)
+
+func _update_items(dt: float) -> bool:
+	var changed_this_tick := false
+
+	for index in range(items.size() - 1, -1, -1):
+		var item: Dictionary = items[index]
+		item["progress"] = float(item.get("progress", 0.0)) + dt * Config.ITEM_SPEED
+		item["age"] = float(item.get("age", 0.0)) + dt
+
+		if float(item["age"]) > Config.ITEM_MAX_AGE:
+			items.remove_at(index)
+			changed_this_tick = true
+			continue
+
+		var alive := true
+		while float(item["progress"]) >= 1.0 and alive:
+			item["progress"] = float(item["progress"]) - 1.0
+			alive = _advance_item(item)
+			changed_this_tick = true
+
+		if alive:
+			items[index] = item
+		else:
+			items.remove_at(index)
+
+	return changed_this_tick
+
+func _advance_item(item: Dictionary) -> bool:
+	var cell: Vector2i = item.get("cell", Vector2i(-1, -1))
+	var dir := int(item.get("dir", 0))
+	var next_cell := cell + Config.direction_offset(dir)
+
+	if not _is_cell_in_bounds(next_cell):
+		return false
+
+	var target := get_building(next_cell)
+	if target.is_empty():
+		item["progress"] = 0.98
+		return true
+
+	var target_type := String(target.get("type", ""))
+	if target_type == Config.TOOL_BELT:
+		item["cell"] = next_cell
+		item["dir"] = int(target.get("dir", 0))
+		return true
+
+	if (
+		target_type == Config.TOOL_ASSEMBLER
+		or target_type == Config.TOOL_INSERTER
+		or target_type == Config.TOOL_GENERATOR
+		or target_type == Config.TOOL_STORAGE
+	):
+		item["progress"] = 0.98
+		return true
+
+	return false
 
 func _generate_resources() -> void:
 	resources.clear()

@@ -73,6 +73,8 @@ func _ready() -> void:
 		return
 	if not _expect(state.get_resource_amount(ore_cell) == amount_before - spawned_items, "miner resource consumption mismatch"):
 		return
+	if not _expect(_has_item_at(state, belt_cell), "belt did not move ore item into its cell"):
+		return
 
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
@@ -98,3 +100,10 @@ func _advance(state, seconds: float) -> void:
 		var dt: float = minf(Config.SIMULATION_DT_CLAMP, remaining)
 		state.tick(dt)
 		remaining -= dt
+
+func _has_item_at(state, cell: Vector2i) -> bool:
+	for item in state.get_items():
+		var item_cell: Vector2i = item.get("cell", Vector2i(-1, -1))
+		if item_cell == cell:
+			return true
+	return false

@@ -123,7 +123,9 @@ func _draw_items() -> void:
 			continue
 
 		var rect := _cell_rect(cell)
-		var center := rect.get_center()
+		var dir := Config.direction_vector(int(item.get("dir", 0)))
+		var progress: float = clampf(float(item.get("progress", 0.0)), 0.0, 1.0)
+		var center := rect.get_center() + dir * float(Config.CELL_SIZE) * progress
 		draw_circle(center, 5.0, Config.COLOR_ITEM_ORE)
 		draw_circle(center, 7.0, Config.COLOR_ORE_GLOW)
 
