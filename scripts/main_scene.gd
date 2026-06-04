@@ -26,6 +26,10 @@ func _ready() -> void:
 	if OS.is_debug_build():
 		print("FACTORYOPS_MAIN_SCENE_READY")
 
+func _process(delta: float) -> void:
+	if factory_state != null:
+		factory_state.tick(delta)
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is not InputEventKey:
 		return
@@ -79,8 +83,9 @@ func _update_hud() -> void:
 		return
 
 	var selected_tool := String(factory_state.selected_tool)
-	hud_label.text = "Creditos: %d   Ferramenta: %s $%d   %s" % [
+	hud_label.text = "Creditos: %d   Itens: %d   Ferramenta: %s $%d   %s" % [
 		int(factory_state.money),
+		factory_state.get_items().size(),
 		Config.tool_label(selected_tool),
 		Config.tool_cost(selected_tool),
 		last_action,

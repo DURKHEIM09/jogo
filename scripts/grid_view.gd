@@ -44,6 +44,7 @@ func _draw() -> void:
 	_draw_checker_cells()
 	_draw_resources()
 	_draw_buildings()
+	_draw_items()
 	_draw_selection()
 	_draw_grid_lines(grid_size)
 
@@ -111,6 +112,20 @@ func _draw_building_symbol(rect: Rect2, building: Dictionary) -> void:
 		draw_rect(Rect2(center - Vector2(7.0, 7.0), Vector2(14.0, 14.0)), Config.COLOR_BUILDING_BORDER, false, 2.0)
 	elif tool == Config.TOOL_GENERATOR:
 		draw_circle(center, 7.0, Config.COLOR_BUILDING_BORDER)
+
+func _draw_items() -> void:
+	if factory_state == null:
+		return
+
+	for item in factory_state.get_items():
+		var cell: Vector2i = item.get("cell", INVALID_CELL)
+		if not _is_valid_cell(cell):
+			continue
+
+		var rect := _cell_rect(cell)
+		var center := rect.get_center()
+		draw_circle(center, 5.0, Config.COLOR_ITEM_ORE)
+		draw_circle(center, 7.0, Config.COLOR_ORE_GLOW)
 
 func _draw_selection() -> void:
 	if _is_valid_cell(selected_cell):

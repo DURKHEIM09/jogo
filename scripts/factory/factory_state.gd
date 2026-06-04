@@ -11,6 +11,7 @@ var selected_dir := 0
 
 var buildings := {}
 var resources := {}
+var items := []
 
 func _init() -> void:
 	_generate_resources()
@@ -26,6 +27,21 @@ func rotate_selection() -> void:
 	selected_dir = (selected_dir + 1) % Config.DIRECTION_COUNT
 	emit_signal("changed")
 
+func tick(delta: float) -> void:
+	var dt: float = minf(delta, Config.SIMULATION_DT_CLAMP)
+	var changed_this_tick := false
+
+	for key in buildings.keys():
+		var cell: Vector2i = key
+		var building: Dictionary = buildings[cell]
+		var building_type := String(building.get("type", ""))
+
+		if building_type == Config.TOOL_MINER:
+			changed_this_tick = _update_miner(cell, building, dt) or changed_this_tick
+
+	if changed_this_tick:
+		emit_signal("changed")
+
 func try_apply_tool(cell: Vector2i) -> Dictionary:
 	if not _is_cell_in_bounds(cell):
 		return _result(false, "blocked", "Fora da grade.", cell, 0)
@@ -39,8 +55,16 @@ func get_buildings() -> Array:
 func get_resources() -> Array:
 	return resources.values()
 
+func get_items() -> Array:
+	return items
+
 func has_resource(cell: Vector2i) -> bool:
 	return resources.has(cell) and int(resources[cell].get("amount", 0)) > 0
+
+func get_resource_amount(cell: Vector2i) -> int:
+	if not resources.has(cell):
+		return 0
+	return int(resources[cell].get("amount", 0))
 
 func get_building(cell: Vector2i) -> Dictionary:
 	if not buildings.has(cell):
@@ -88,6 +112,61 @@ func _try_remove(cell: Vector2i) -> Dictionary:
 	money += refund
 	emit_signal("changed")
 	return _result(true, "removed", "Removido.", cell, refund)
+
+func _update_miner(cell: Vector2i, building: Dictionary, dt: float) -> bool:
+	if not bool(building.get("powered", true)):
+		return false
+	if not has_resource(cell):
+		return false
+	if items.size() >= Config.ITEM_CAP:
+		return false
+
+	building["timer"] = float(building.get("timer", 0.0)) + dt
+	if float(building["timer"]) < Config.MINER_INTERVAL:
+		buildings[cell] = building
+		return false
+	if not _output_can_accept(cell, int(building.get("dir", 0)), "ore"):
+		buildings[cell] = building
+		return false
+
+	building["timer"] = float(building["timer"]) - Config.MINER_INTERVAL
+	buildings[cell] = building
+	_consume_resource(cell)
+	_spawn_item(cell, int(building.get("dir", 0)), "ore")
+	return true
+
+func _output_can_accept(cell: Vector2i, dir: int, item_type: String) -> bool:
+	if item_type != "ore":
+		return false
+
+	var target_cell := cell + Config.direction_offset(dir)
+	if not _is_cell_in_bounds(target_cell):
+		return false
+
+	var target := get_building(target_cell)
+	return String(target.get("type", "")) == Config.TOOL_BELT
+
+func _consume_resource(cell: Vector2i) -> void:
+	if not resources.has(cell):
+		return
+
+	var resource: Dictionary = resources[cell]
+	resource["amount"] = max(0, int(resource.get("amount", 0)) - 1)
+	if int(resource["amount"]) <= 0:
+		resources.erase(cell)
+		return
+
+	resources[cell] = resource
+
+func _spawn_item(cell: Vector2i, dir: int, item_type: String) -> void:
+	var item: Dictionary = {
+		"type": item_type,
+		"cell": cell,
+		"dir": dir,
+		"progress": 0.0,
+		"age": 0.0,
+	}
+	items.append(item)
 
 func _generate_resources() -> void:
 	resources.clear()

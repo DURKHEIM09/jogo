@@ -29,6 +29,10 @@ const BUILDING_REFUND_RATE := 0.45
 const DIRECTION_COUNT := 4
 const ORE_BASE_AMOUNT := 800
 const ORE_AMOUNT_VARIANCE := 420
+const MINER_INTERVAL := 1.18
+const ITEM_CAP := 220
+const SIMULATION_DT_CLAMP := 0.25
+const COLOR_ITEM_ORE := Color(0.957, 0.714, 0.302, 1.0)
 
 const TOOL_BELT := "belt"
 const TOOL_INSERTER := "inserter"
@@ -135,15 +139,18 @@ static func tool_mark(tool: String) -> String:
 			return "?"
 
 static func direction_vector(dir: int) -> Vector2:
+	return Vector2(direction_offset(dir))
+
+static func direction_offset(dir: int) -> Vector2i:
 	match posmod(dir, DIRECTION_COUNT):
 		0:
-			return Vector2.RIGHT
+			return Vector2i.RIGHT
 		1:
-			return Vector2.DOWN
+			return Vector2i.DOWN
 		2:
-			return Vector2.LEFT
+			return Vector2i.LEFT
 		_:
-			return Vector2.UP
+			return Vector2i.UP
 
 static func ore_patch_specs() -> Array:
 	return [

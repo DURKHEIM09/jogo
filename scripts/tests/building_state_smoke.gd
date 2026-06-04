@@ -44,11 +44,34 @@ func _ready() -> void:
 	if not _expect(state.money == expected_money, "blocked miner changed money"):
 		return
 
+	while state.selected_dir != 0:
+		state.rotate_selection()
+
 	var ore_cell: Vector2i = state.get_resources()[0]["cell"]
 	var placed_miner: Dictionary = state.try_apply_tool(ore_cell)
 	if not _expect(bool(placed_miner["ok"]), "miner placement on ore failed"):
 		return
 	if not _expect(state.money == expected_money - Config.tool_cost(Config.TOOL_MINER), "miner cost mismatch"):
+		return
+
+	var amount_before := state.get_resource_amount(ore_cell)
+	_advance(state, Config.MINER_INTERVAL * 2.0)
+	if not _expect(state.get_items().is_empty(), "miner should wait for belt output"):
+		return
+	if not _expect(state.get_resource_amount(ore_cell) == amount_before, "miner consumed resource without belt"):
+		return
+
+	state.select_tool(Config.TOOL_BELT)
+	var belt_cell := ore_cell + Config.direction_offset(0)
+	var placed_belt: Dictionary = state.try_apply_tool(belt_cell)
+	if not _expect(bool(placed_belt["ok"]), "belt placement for miner output failed"):
+		return
+
+	_advance(state, Config.MINER_INTERVAL * 2.0)
+	var spawned_items := state.get_items().size()
+	if not _expect(spawned_items >= 1, "miner did not spawn ore item"):
+		return
+	if not _expect(state.get_resource_amount(ore_cell) == amount_before - spawned_items, "miner resource consumption mismatch"):
 		return
 
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
@@ -68,3 +91,10 @@ func _first_empty_resource_cell(state) -> Vector2i:
 			if not state.has_resource(cell):
 				return cell
 	return Vector2i(-1, -1)
+
+func _advance(state, seconds: float) -> void:
+	var remaining := seconds
+	while remaining > 0.0:
+		var dt: float = minf(Config.SIMULATION_DT_CLAMP, remaining)
+		state.tick(dt)
+		remaining -= dt
