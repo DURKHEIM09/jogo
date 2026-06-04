@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/main_scene.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/grid_view.gd" id="2_grid"]
+
+[node name="Main" type="Node2D" unique_id=133079088]
+script = ExtResource("1_main")
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=1428671728]
+position = Vector2(640, 360)
+enabled = true
+
+[node name="GridView" type="Node2D" parent="." unique_id=926422179]
+position = Vector2(80, 96)
+script = ExtResource("2_grid")
