@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/smoke_root.gd" id="1_0xsmoke"]
+
+[node name="root" type="Node2D" unique_id=2012920199]
+script = ExtResource("1_0xsmoke")

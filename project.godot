@@ -1,0 +1,12 @@
+; Engine configuration file.
+; FactoryOps Godot bootstrap project.
+
+config_version=5
+
+[application]
+
+config/name="FactoryOps"
+run/main_scene="res://scenes/smoke.tscn"
+config/features=PackedStringArray("4.6")
+config/icon=""
+
