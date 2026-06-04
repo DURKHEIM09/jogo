@@ -198,6 +198,6 @@ func _draw_assembler_counters(center: Vector2, building: Dictionary) -> void:
 		draw_circle(center + Vector2(-6.0 + float(index) * 6.0, -7.0), 2.4, Config.COLOR_ITEM_PART)
 
 func _item_color(item: Dictionary) -> Color:
-	if String(item.get("type", "")) == "part":
+	if String(item.get("type", "")) == Config.ITEM_PART:
 		return Config.COLOR_ITEM_PREMIUM if bool(item.get("premium", false)) else Config.COLOR_ITEM_PART
 	return Config.COLOR_ITEM_ORE

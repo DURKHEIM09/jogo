@@ -146,18 +146,18 @@ func _update_miner(cell: Vector2i, building: Dictionary, dt: float) -> bool:
 	if float(building["timer"]) < Config.MINER_INTERVAL:
 		buildings[cell] = building
 		return false
-	if not _output_can_accept(cell, int(building.get("dir", 0)), "ore"):
+	if not _output_can_accept(cell, int(building.get("dir", 0)), Config.ITEM_ORE):
 		buildings[cell] = building
 		return false
 
 	building["timer"] = float(building["timer"]) - Config.MINER_INTERVAL
 	buildings[cell] = building
 	_consume_resource(cell)
-	_spawn_item(cell, int(building.get("dir", 0)), "ore")
+	_spawn_item(cell, int(building.get("dir", 0)), Config.ITEM_ORE)
 	return true
 
 func _output_can_accept(cell: Vector2i, dir: int, item_type: String) -> bool:
-	if item_type != "ore":
+	if item_type != Config.ITEM_ORE:
 		return false
 
 	var target_cell := cell + Config.direction_offset(dir)
@@ -227,9 +227,9 @@ func _pick_for_inserter(cell: Vector2i, dir: int) -> Dictionary:
 	if String(source.get("type", "")) == Config.TOOL_ASSEMBLER and int(source.get("output_parts", 0)) > 0:
 		var output_queue: Array = source.get("output_queue", [])
 		while output_queue.size() < int(source.get("output_parts", 0)):
-			output_queue.append(_make_item("part"))
+			output_queue.append(_make_item(Config.ITEM_PART))
 
-		var picked_from_assembler: Dictionary = output_queue.pop_front() if not output_queue.is_empty() else _make_item("part")
+		var picked_from_assembler: Dictionary = output_queue.pop_front() if not output_queue.is_empty() else _make_item(Config.ITEM_PART)
 		source["output_queue"] = output_queue
 		source["output_parts"] = output_queue.size()
 		buildings[pickup_cell] = source
@@ -254,27 +254,27 @@ func _drop_from_inserter(cell: Vector2i, dir: int, held_item: Dictionary) -> boo
 		return false
 
 	var held := _normalize_item(held_item)
-	var item_type := String(held.get("type", "ore"))
+	var item_type := String(held.get("type", Config.ITEM_ORE))
 
 	if target_type == Config.TOOL_BELT:
 		if _item_count_at_cell(drop_cell) >= Config.BELT_CELL_ITEM_CAP:
 			return false
 		held["cell"] = drop_cell
 		held["dir"] = int(target.get("dir", 0))
-		held["progress"] = 0.12
+		held["progress"] = Config.BELT_INSERT_PROGRESS
 		held["age"] = 0.0
 		items.append(held)
 		return true
 
-	if target_type == Config.TOOL_ASSEMBLER and item_type == "ore" and int(target.get("input_ore", 0)) < Config.ASSEMBLER_INPUT_CAP:
+	if target_type == Config.TOOL_ASSEMBLER and item_type == Config.ITEM_ORE and int(target.get("input_ore", 0)) < Config.ASSEMBLER_INPUT_CAP:
 		target["input_ore"] = int(target.get("input_ore", 0)) + 1
 		buildings[drop_cell] = target
 		return true
 
 	if target_type == Config.TOOL_STORAGE:
-		if item_type == "part":
+		if item_type == Config.ITEM_PART:
 			_store_part(held)
-		elif item_type == "ore":
+		elif item_type == Config.ITEM_ORE:
 			ore_stored += 1
 		return true
 
@@ -287,9 +287,9 @@ func _update_assembler(cell: Vector2i, building: Dictionary, dt: float) -> bool:
 	var output_queue: Array = building.get("output_queue", [])
 	building["output_parts"] = output_queue.size()
 
-	if int(building.get("input_ore", 0)) < 2:
+	if int(building.get("input_ore", 0)) < Config.ASSEMBLER_INPUT_PER_PART:
 		var previous_timer := float(building.get("timer", 0.0))
-		building["timer"] = maxf(0.0, previous_timer - dt * 0.5)
+		building["timer"] = maxf(0.0, previous_timer - dt * Config.ASSEMBLER_TIMER_DECAY)
 		buildings[cell] = building
 		return float(building["timer"]) != previous_timer
 
@@ -303,8 +303,8 @@ func _update_assembler(cell: Vector2i, building: Dictionary, dt: float) -> bool:
 		return false
 
 	building["timer"] = float(building["timer"]) - Config.ASSEMBLER_BUILD_TIME
-	building["input_ore"] = int(building.get("input_ore", 0)) - 2
-	output_queue.append(_make_item("part", _roll_part_quality(cell, building)))
+	building["input_ore"] = int(building.get("input_ore", 0)) - Config.ASSEMBLER_INPUT_PER_PART
+	output_queue.append(_make_item(Config.ITEM_PART, _roll_part_quality(cell, building)))
 	building["output_queue"] = output_queue
 	building["output_parts"] = output_queue.size()
 	buildings[cell] = building
@@ -328,9 +328,9 @@ func _item_count_at_cell(cell: Vector2i) -> int:
 
 func _normalize_item(item: Dictionary) -> Dictionary:
 	return {
-		"type": String(item.get("type", "ore")),
-		"tier": int(item.get("tier", 1)),
-		"quality": float(item.get("quality", 1.0)),
+		"type": String(item.get("type", Config.ITEM_ORE)),
+		"tier": int(item.get("tier", Config.DEFAULT_ITEM_TIER)),
+		"quality": float(item.get("quality", Config.DEFAULT_ITEM_QUALITY)),
 		"premium": bool(item.get("premium", false)),
 		"cell": item.get("cell", Vector2i(-1, -1)),
 		"dir": int(item.get("dir", 0)),
@@ -338,12 +338,12 @@ func _normalize_item(item: Dictionary) -> Dictionary:
 		"age": float(item.get("age", 0.0)),
 	}
 
-func _make_item(item_type: String, quality := 1.0) -> Dictionary:
+func _make_item(item_type: String, quality := Config.DEFAULT_ITEM_QUALITY) -> Dictionary:
 	return {
 		"type": item_type,
-		"tier": 1,
+		"tier": Config.DEFAULT_ITEM_TIER,
 		"quality": quality,
-		"premium": item_type == "part" and quality >= Config.PREMIUM_THRESHOLD,
+		"premium": item_type == Config.ITEM_PART and quality >= Config.PREMIUM_THRESHOLD,
 		"cell": Vector2i(-1, -1),
 		"dir": 0,
 		"progress": 0.0,
@@ -381,7 +381,7 @@ func _store_part(_part: Dictionary) -> void:
 	produced_times.append(simulation_time)
 
 func _update_rate_window() -> void:
-	var cutoff := simulation_time - 60.0
+	var cutoff := simulation_time - Config.RATE_WINDOW_SECONDS
 	produced_times = produced_times.filter(func(stamp): return float(stamp) >= cutoff)
 
 func _update_items(dt: float) -> bool:
@@ -420,7 +420,7 @@ func _advance_item(item: Dictionary) -> bool:
 
 	var target := get_building(next_cell)
 	if target.is_empty():
-		item["progress"] = 0.98
+		item["progress"] = Config.BLOCKED_ITEM_PROGRESS
 		return true
 
 	var target_type := String(target.get("type", ""))
@@ -435,7 +435,7 @@ func _advance_item(item: Dictionary) -> bool:
 		or target_type == Config.TOOL_GENERATOR
 		or target_type == Config.TOOL_STORAGE
 	):
-		item["progress"] = 0.98
+		item["progress"] = Config.BLOCKED_ITEM_PROGRESS
 		return true
 
 	return false

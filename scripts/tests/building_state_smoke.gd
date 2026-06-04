@@ -117,7 +117,7 @@ func _ready() -> void:
 	if not _expect(not output_queue.is_empty(), "assembler output queue missing part"):
 		return
 	var first_part: Dictionary = output_queue[0]
-	if not _expect(String(first_part.get("type", "")) == "part", "assembler output is not part"):
+	if not _expect(String(first_part.get("type", "")) == Config.ITEM_PART, "assembler output is not part"):
 		return
 	if not _expect(float(first_part.get("quality", 0.0)) >= Config.MIN_QUALITY, "part quality below minimum"):
 		return
