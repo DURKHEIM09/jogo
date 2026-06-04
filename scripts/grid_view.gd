@@ -4,8 +4,15 @@ extends Node2D
 const Config := preload("res://scripts/config/bootstrap_config.gd")
 const INVALID_CELL := Vector2i(-1, -1)
 
+signal cell_clicked(cell: Vector2i)
+
 var hovered_cell := INVALID_CELL
 var selected_cell := INVALID_CELL
+var factory_state = null
+
+func set_factory_state(next_factory_state) -> void:
+	factory_state = next_factory_state
+	queue_redraw()
 
 func _ready() -> void:
 	set_process_input(true)
@@ -24,7 +31,7 @@ func _input(event: InputEvent) -> void:
 			if _is_valid_cell(cell):
 				selected_cell = cell
 				hovered_cell = cell
-				print("FACTORYOPS_GRID_CELL_SELECTED:%d,%d" % [cell.x, cell.y])
+				cell_clicked.emit(cell)
 				queue_redraw()
 
 func _draw() -> void:
@@ -35,6 +42,7 @@ func _draw() -> void:
 
 	draw_rect(Rect2(Vector2.ZERO, grid_size), Config.COLOR_GRID_FILL_A)
 	_draw_checker_cells()
+	_draw_buildings()
 	_draw_selection()
 	_draw_grid_lines(grid_size)
 
@@ -44,6 +52,37 @@ func _draw_checker_cells() -> void:
 			if (x + y) % 2 == 0:
 				continue
 			draw_rect(_cell_rect(Vector2i(x, y)), Config.COLOR_GRID_FILL_B)
+
+func _draw_buildings() -> void:
+	if factory_state == null:
+		return
+
+	for building in factory_state.get_buildings():
+		var tool := String(building.get("type", ""))
+		var cell: Vector2i = building.get("cell", INVALID_CELL)
+		if not _is_valid_cell(cell):
+			continue
+
+		var rect := _cell_rect(cell).grow(-4.0)
+		draw_rect(rect, Config.tool_color(tool))
+		draw_rect(rect, Config.COLOR_BUILDING_BORDER, false, 2.0)
+		_draw_building_symbol(rect, building)
+
+func _draw_building_symbol(rect: Rect2, building: Dictionary) -> void:
+	var tool := String(building.get("type", ""))
+	var center := rect.get_center()
+
+	if Config.is_directional_tool(tool):
+		var dir := Config.direction_vector(int(building.get("dir", 0)))
+		var end := center + dir * 9.0
+		draw_line(center - dir * 5.0, end, Config.COLOR_BUILDING_BORDER, 2.5)
+		draw_circle(end, 3.0, Config.COLOR_BUILDING_BORDER)
+		return
+
+	if tool == Config.TOOL_STORAGE:
+		draw_rect(Rect2(center - Vector2(7.0, 7.0), Vector2(14.0, 14.0)), Config.COLOR_BUILDING_BORDER, false, 2.0)
+	elif tool == Config.TOOL_GENERATOR:
+		draw_circle(center, 7.0, Config.COLOR_BUILDING_BORDER)
 
 func _draw_selection() -> void:
 	if _is_valid_cell(selected_cell):
