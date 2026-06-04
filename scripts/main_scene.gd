@@ -38,6 +38,21 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not key_event.pressed or key_event.echo:
 		return
 
+	if key_event.keycode == KEY_F5:
+		var saved: bool = factory_state.save_to_disk()
+		last_action = "Jogo salvo." if saved else "Falha ao salvar."
+		_update_hud()
+		print("FACTORYOPS_SAVE:%s" % ["ok" if saved else "fail"])
+		return
+
+	if key_event.keycode == KEY_F9:
+		var loaded: bool = factory_state.load_from_disk()
+		last_action = "Jogo carregado." if loaded else "Save nao encontrado."
+		_update_hud()
+		grid_view.queue_redraw()
+		print("FACTORYOPS_LOAD:%s" % ["ok" if loaded else "miss"])
+		return
+
 	var next_tool := _tool_from_key(key_event.keycode)
 	if next_tool != "":
 		factory_state.select_tool(next_tool)

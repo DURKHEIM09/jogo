@@ -2,6 +2,8 @@ class_name BootstrapConfig
 extends RefCounted
 
 const VIEWPORT_SIZE := Vector2i(1280, 720)
+const SAVE_VERSION := 1
+const SAVE_PATH := "user://factoryops_bootstrap_save.json"
 
 const GRID_COLUMNS := 24
 const GRID_ROWS := 14

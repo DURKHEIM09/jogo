@@ -141,6 +141,25 @@ func _ready() -> void:
 	if not _expect(state.get_parts_per_minute() >= 1, "parts per minute rate did not update"):
 		return
 
+	var snapshot := state.to_snapshot()
+	var restored = FactoryStateScript.new()
+	if not _expect(restored.load_snapshot(snapshot), "snapshot load failed"):
+		return
+	if not _expect(restored.parts == state.parts, "snapshot parts mismatch"):
+		return
+	if not _expect(restored.get_buildings().size() == state.get_buildings().size(), "snapshot building count mismatch"):
+		return
+
+	var save_path := "user://factoryops_smoke_save.json"
+	if not _expect(state.save_to_disk(save_path), "save_to_disk failed"):
+		return
+	var loaded = FactoryStateScript.new()
+	if not _expect(loaded.load_from_disk(save_path), "load_from_disk failed"):
+		return
+	if not _expect(loaded.parts == state.parts, "disk save parts mismatch"):
+		return
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
 

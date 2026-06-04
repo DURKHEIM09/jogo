@@ -89,6 +89,80 @@ func get_building(cell: Vector2i) -> Dictionary:
 		return {}
 	return buildings[cell]
 
+func save_to_disk(path := Config.SAVE_PATH) -> bool:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		push_error("FACTORYOPS_SAVE_FAILED:%s" % path)
+		return false
+
+	file.store_string(JSON.stringify(to_snapshot()))
+	return true
+
+func load_from_disk(path := Config.SAVE_PATH) -> bool:
+	if not FileAccess.file_exists(path):
+		return false
+
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		push_error("FACTORYOPS_LOAD_FAILED:%s" % path)
+		return false
+
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_error("FACTORYOPS_LOAD_INVALID_JSON:%s" % path)
+		return false
+
+	return load_snapshot(parsed)
+
+func to_snapshot() -> Dictionary:
+	return {
+		"version": Config.SAVE_VERSION,
+		"money": money,
+		"selected_tool": selected_tool,
+		"selected_dir": selected_dir,
+		"simulation_time": simulation_time,
+		"parts": parts,
+		"ore_stored": ore_stored,
+		"produced_times": produced_times.duplicate(true),
+		"buildings": _serialize_buildings(),
+		"resources": _serialize_resources(),
+		"items": _serialize_items(items),
+	}
+
+func load_snapshot(snapshot: Dictionary) -> bool:
+	money = int(snapshot.get("money", Config.INITIAL_MONEY))
+	selected_tool = String(snapshot.get("selected_tool", Config.TOOL_BELT))
+	if not Config.is_known_tool(selected_tool):
+		selected_tool = Config.TOOL_BELT
+	selected_dir = posmod(int(snapshot.get("selected_dir", 0)), Config.DIRECTION_COUNT)
+	simulation_time = maxf(0.0, float(snapshot.get("simulation_time", 0.0)))
+	parts = max(0, int(snapshot.get("parts", 0)))
+	ore_stored = max(0, int(snapshot.get("ore_stored", 0)))
+	produced_times = _deserialize_float_array(snapshot.get("produced_times", []))
+
+	buildings.clear()
+	for raw_building in _as_array(snapshot.get("buildings", [])):
+		var building := _deserialize_building(raw_building)
+		if building.is_empty():
+			continue
+		var cell: Vector2i = building["cell"]
+		if _is_cell_in_bounds(cell):
+			buildings[cell] = building
+
+	resources.clear()
+	for raw_resource in _as_array(snapshot.get("resources", [])):
+		var resource := _deserialize_resource(raw_resource)
+		if resource.is_empty():
+			continue
+		var cell: Vector2i = resource["cell"]
+		if _is_cell_in_bounds(cell) and int(resource.get("amount", 0)) > 0:
+			resources[cell] = resource
+
+	items = _deserialize_items(snapshot.get("items", []))
+	_update_rate_window()
+	emit_signal("changed")
+	return true
+
 func _try_place(cell: Vector2i) -> Dictionary:
 	if buildings.has(cell):
 		var existing: Dictionary = buildings[cell]
@@ -383,6 +457,144 @@ func _store_part(_part: Dictionary) -> void:
 func _update_rate_window() -> void:
 	var cutoff := simulation_time - Config.RATE_WINDOW_SECONDS
 	produced_times = produced_times.filter(func(stamp): return float(stamp) >= cutoff)
+
+func _serialize_buildings() -> Array:
+	var result: Array = []
+	for building in buildings.values():
+		result.append(_serialize_building(building))
+	return result
+
+func _serialize_building(building: Dictionary) -> Dictionary:
+	return {
+		"type": String(building.get("type", "")),
+		"cell": _serialize_cell(building.get("cell", Vector2i(-1, -1))),
+		"dir": int(building.get("dir", 0)),
+		"timer": float(building.get("timer", 0.0)),
+		"input_ore": int(building.get("input_ore", 0)),
+		"output_parts": int(building.get("output_parts", 0)),
+		"output_queue": _serialize_items(building.get("output_queue", [])),
+		"held": _serialize_optional_item(building.get("held", {})),
+		"progress": float(building.get("progress", 0.0)),
+		"powered": bool(building.get("powered", true)),
+	}
+
+func _deserialize_building(raw_building: Variant) -> Dictionary:
+	if typeof(raw_building) != TYPE_DICTIONARY:
+		return {}
+
+	var source: Dictionary = raw_building
+	var cell := _deserialize_cell(source.get("cell", {}))
+	var tool := String(source.get("type", ""))
+	if not Config.is_known_tool(tool) or tool == Config.TOOL_ERASE:
+		return {}
+
+	var output_queue := _deserialize_items(source.get("output_queue", []))
+	var held := _deserialize_optional_item(source.get("held", {}))
+	return {
+		"type": tool,
+		"cell": cell,
+		"dir": posmod(int(source.get("dir", 0)), Config.DIRECTION_COUNT),
+		"timer": maxf(0.0, float(source.get("timer", 0.0))),
+		"input_ore": max(0, int(source.get("input_ore", 0))),
+		"output_parts": output_queue.size(),
+		"output_queue": output_queue,
+		"held": held,
+		"progress": clampf(float(source.get("progress", 0.0)), 0.0, 1.0),
+		"powered": bool(source.get("powered", true)),
+	}
+
+func _serialize_resources() -> Array:
+	var result: Array = []
+	for resource in resources.values():
+		result.append({
+			"cell": _serialize_cell(resource.get("cell", Vector2i(-1, -1))),
+			"amount": int(resource.get("amount", 0)),
+			"phase": float(resource.get("phase", 0.0)),
+		})
+	return result
+
+func _deserialize_resource(raw_resource: Variant) -> Dictionary:
+	if typeof(raw_resource) != TYPE_DICTIONARY:
+		return {}
+
+	var source: Dictionary = raw_resource
+	return {
+		"cell": _deserialize_cell(source.get("cell", {})),
+		"amount": max(0, int(source.get("amount", 0))),
+		"phase": float(source.get("phase", 0.0)),
+	}
+
+func _serialize_items(source_items: Array) -> Array:
+	var result: Array = []
+	for item in source_items:
+		result.append(_serialize_item(_normalize_item(item)))
+	return result
+
+func _deserialize_items(raw_items: Variant) -> Array:
+	var result: Array = []
+	for raw_item in _as_array(raw_items):
+		var item := _deserialize_optional_item(raw_item)
+		if not item.is_empty():
+			result.append(item)
+	return result
+
+func _serialize_optional_item(raw_item: Variant) -> Dictionary:
+	if typeof(raw_item) != TYPE_DICTIONARY or Dictionary(raw_item).is_empty():
+		return {}
+	return _serialize_item(_normalize_item(raw_item))
+
+func _serialize_item(item: Dictionary) -> Dictionary:
+	return {
+		"type": String(item.get("type", Config.ITEM_ORE)),
+		"tier": int(item.get("tier", Config.DEFAULT_ITEM_TIER)),
+		"quality": float(item.get("quality", Config.DEFAULT_ITEM_QUALITY)),
+		"premium": bool(item.get("premium", false)),
+		"cell": _serialize_cell(item.get("cell", Vector2i(-1, -1))),
+		"dir": int(item.get("dir", 0)),
+		"progress": float(item.get("progress", 0.0)),
+		"age": float(item.get("age", 0.0)),
+	}
+
+func _deserialize_optional_item(raw_item: Variant) -> Dictionary:
+	if typeof(raw_item) != TYPE_DICTIONARY or Dictionary(raw_item).is_empty():
+		return {}
+
+	var source: Dictionary = raw_item
+	var item_type := String(source.get("type", Config.ITEM_ORE))
+	if item_type != Config.ITEM_ORE and item_type != Config.ITEM_PART:
+		return {}
+
+	return _normalize_item({
+		"type": item_type,
+		"tier": int(source.get("tier", Config.DEFAULT_ITEM_TIER)),
+		"quality": float(source.get("quality", Config.DEFAULT_ITEM_QUALITY)),
+		"premium": bool(source.get("premium", false)),
+		"cell": _deserialize_cell(source.get("cell", {})),
+		"dir": int(source.get("dir", 0)),
+		"progress": float(source.get("progress", 0.0)),
+		"age": float(source.get("age", 0.0)),
+	})
+
+func _serialize_cell(cell: Vector2i) -> Dictionary:
+	return {"x": cell.x, "y": cell.y}
+
+func _deserialize_cell(raw_cell: Variant) -> Vector2i:
+	if typeof(raw_cell) != TYPE_DICTIONARY:
+		return Vector2i(-1, -1)
+
+	var source: Dictionary = raw_cell
+	return Vector2i(int(source.get("x", -1)), int(source.get("y", -1)))
+
+func _deserialize_float_array(raw_values: Variant) -> Array:
+	var result: Array = []
+	for raw_value in _as_array(raw_values):
+		result.append(float(raw_value))
+	return result
+
+func _as_array(value: Variant) -> Array:
+	if typeof(value) != TYPE_ARRAY:
+		return []
+	return value
 
 func _update_items(dt: float) -> bool:
 	var changed_this_tick := false
