@@ -5,6 +5,7 @@ const FactoryStateScript := preload("res://scripts/factory/factory_state.gd")
 
 func _ready() -> void:
 	var state = FactoryStateScript.new()
+	state.shop_spawn_timer = 999.0
 	if not _expect(state.money == Config.INITIAL_MONEY, "initial money mismatch"):
 		return
 
@@ -242,6 +243,49 @@ func _ready() -> void:
 	if not _expect(state.parts == parts_before_unpowered, "unpowered factory kept producing after generator removal"):
 		return
 
+	var sale_stock_before := state.get_shop_stock()
+	var sale_money_before: int = state.money
+	var sale_reputation_before: float = state.shop_reputation
+	var sale_price: int = state.shop_price
+	state.spawn_shop_customer(sale_price)
+	_advance(state, 5.5)
+	if not _expect(state.shop_sales == 1, "customer did not buy stocked item"):
+		return
+	if not _expect(state.shop_customers_served == 1, "served customer count did not update"):
+		return
+	if not _expect(state.money == sale_money_before + sale_price, "sale did not add money"):
+		return
+	if not _expect(state.shop_revenue == sale_price, "sale revenue mismatch"):
+		return
+	if not _expect(state.get_shop_stock() == sale_stock_before - 1, "sale did not consume shop stock"):
+		return
+	if not _expect(state.shop_reputation > sale_reputation_before, "sale did not improve reputation"):
+		return
+
+	var empty_shop = FactoryStateScript.new()
+	empty_shop.shop_spawn_timer = 999.0
+	var empty_reputation_before: float = empty_shop.shop_reputation
+	empty_shop.spawn_shop_customer(Config.SHOP_MAX_PRICE)
+	_advance(empty_shop, 5.5)
+	if not _expect(empty_shop.shop_customers_lost == 1, "stockout customer did not count as lost"):
+		return
+	if not _expect(empty_shop.shop_reputation < empty_reputation_before, "stockout did not reduce reputation"):
+		return
+
+	var expensive_shop = FactoryStateScript.new()
+	expensive_shop.shop_spawn_timer = 999.0
+	expensive_shop._store_part(_test_part(Config.DEFAULT_ITEM_QUALITY))
+	expensive_shop.shop_price = Config.SHOP_MAX_PRICE
+	var expensive_reputation_before: float = expensive_shop.shop_reputation
+	expensive_shop.spawn_shop_customer(Config.SHOP_MIN_PRICE)
+	_advance(expensive_shop, 5.5)
+	if not _expect(expensive_shop.shop_customers_lost == 1, "overpriced customer did not count as lost"):
+		return
+	if not _expect(expensive_shop.get_shop_stock() == 1, "overpriced customer consumed stock"):
+		return
+	if not _expect(expensive_shop.shop_reputation < expensive_reputation_before, "overprice did not reduce reputation"):
+		return
+
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
 
@@ -291,6 +335,14 @@ func _snapshot_persists_powered(snapshot: Dictionary) -> bool:
 		if typeof(raw_building) == TYPE_DICTIONARY and Dictionary(raw_building).has("powered"):
 			return true
 	return false
+
+func _test_part(quality: float) -> Dictionary:
+	return {
+		"type": Config.ITEM_PART,
+		"tier": Config.DEFAULT_ITEM_TIER,
+		"quality": quality,
+		"premium": quality >= Config.PREMIUM_THRESHOLD,
+	}
 
 func _shop_has_part(state, quality: float, premium: bool) -> bool:
 	for item in state.get_shop_inventory():

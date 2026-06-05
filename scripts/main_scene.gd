@@ -123,7 +123,7 @@ func _update_hud() -> void:
 	var selected_tool := String(factory_state.selected_tool)
 	if factory_state.mode == Config.MODE_SHOP:
 		var report: Dictionary = factory_state.get_shop_report()
-		hud_label.text = "Modo: Loja   Creditos: %d   Estoque: %d   Base/Prem: %d/%d   Qualidade: %.2f   Melhor: %.2f   Preco: $%d\nDemanda: %s   Reputacao: %d   Receita: %d   Vendas: %d   Gargalo: %s   %s" % [
+		hud_label.text = "Modo: Loja   Creditos: %d   Estoque: %d   Base/Prem: %d/%d   Qualidade: %.2f   Melhor: %.2f   Preco: $%d\nDemanda: %s   Reputacao: %d   Clientes: %d   Perdidos: %d   Receita: %d   Vendas: %d   Gargalo: %s   %s" % [
 			int(factory_state.money),
 			int(report["stock"]),
 			int(report["base_stock"]),
@@ -133,6 +133,8 @@ func _update_hud() -> void:
 			int(report["price"]),
 			String(report["demand_label"]),
 			int(round(float(report["reputation"]))),
+			int(report["customers_active"]),
+			int(report["customers_lost"]),
 			int(report["revenue"]),
 			int(report["sales"]),
 			String(report["bottleneck"]),

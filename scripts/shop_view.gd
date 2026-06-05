@@ -18,6 +18,7 @@ func _draw() -> void:
 	_draw_checkout(view_size)
 	_draw_door(view_size)
 	_draw_stock(view_size)
+	_draw_customers(view_size)
 
 func _draw_floor_grid(view_size: Vector2) -> void:
 	for x in range(0, int(view_size.x), Config.CELL_SIZE):
@@ -68,3 +69,19 @@ func _draw_stock(view_size: Vector2) -> void:
 		var color := Config.COLOR_ITEM_PREMIUM if bool(item.get("premium", false)) else Config.COLOR_ITEM_PART
 		draw_circle(position, 7.0, color)
 		draw_circle(position, 10.0, Color(color.r, color.g, color.b, 0.22))
+
+func _draw_customers(view_size: Vector2) -> void:
+	if factory_state == null:
+		return
+
+	for customer in factory_state.get_shop_customers():
+		var customer_state: Dictionary = customer
+		var position := Vector2(
+			float(customer_state.get("x", 0.0)) * view_size.x,
+			float(customer_state.get("y", 0.0)) * view_size.y
+		)
+		var color := Config.customer_color(int(customer_state.get("color_index", 0)), bool(customer_state.get("bought", false)))
+		draw_circle(position, 8.0, color)
+		draw_circle(position, 12.0, Color(color.r, color.g, color.b, 0.22))
+		if bool(customer_state.get("bought", false)):
+			draw_circle(position + Vector2(5.0, -6.0), 3.0, Config.COLOR_ITEM_PART)

@@ -33,6 +33,8 @@ var shop_best_quality := Config.DEFAULT_ITEM_QUALITY
 var shop_premium_produced := 0
 var shop_consumed_base := 0
 var shop_consumed_premium := 0
+var shop_spawn_timer := Config.SHOP_CUSTOMER_INITIAL_SPAWN
+var shop_customers := []
 
 func _init() -> void:
 	rng.randomize()
@@ -67,6 +69,7 @@ func tick(delta: float) -> void:
 			changed_this_tick = _update_assembler(cell, building, dt) or changed_this_tick
 
 	changed_this_tick = _update_items(dt) or changed_this_tick
+	changed_this_tick = _update_shop(dt) or changed_this_tick
 
 	if changed_this_tick:
 		_update_rate_window()
@@ -123,6 +126,9 @@ func toggle_mode() -> void:
 func get_shop_inventory() -> Array:
 	return shop_inventory.duplicate(true)
 
+func get_shop_customers() -> Array:
+	return shop_customers.duplicate(true)
+
 func get_shop_stock() -> int:
 	return shop_inventory.size()
 
@@ -173,6 +179,7 @@ func get_shop_report() -> Dictionary:
 		"demand_label": _shop_demand_label(demand),
 		"customers_served": shop_customers_served,
 		"customers_lost": shop_customers_lost,
+		"customers_active": shop_customers.size(),
 		"sales": shop_sales,
 		"revenue": shop_revenue,
 		"gross_profit": shop_revenue,
@@ -181,6 +188,36 @@ func get_shop_report() -> Dictionary:
 		"premium_produced": shop_premium_produced,
 		"bottleneck": _get_shop_bottleneck(demand),
 	}
+
+func spawn_shop_customer(budget: int = -1, notify: bool = true) -> Dictionary:
+	if shop_customers.size() >= Config.SHOP_CUSTOMER_CAPACITY:
+		return {}
+
+	var next_budget := int(budget)
+	if next_budget < 0:
+		next_budget = (
+			Config.SHOP_CUSTOMER_BUDGET_BASE
+			+ rng.randi_range(0, Config.SHOP_CUSTOMER_BUDGET_RANGE - 1)
+			+ int(floor(shop_reputation / Config.SHOP_CUSTOMER_BUDGET_REPUTATION_DIVISOR))
+		)
+
+	var customer := {
+		"x": 0.12,
+		"y": 0.92,
+		"target_x": 0.34,
+		"target_y": 0.58,
+		"state": Config.CUSTOMER_ENTERING,
+		"wait": 0.0,
+		"color_index": rng.randi_range(0, 2),
+		"budget": next_budget,
+		"done": false,
+		"bought": false,
+		"lost_reason": "",
+	}
+	shop_customers.append(customer)
+	if notify:
+		emit_signal("changed")
+	return customer
 
 func recalculate_power() -> bool:
 	var generators: Array[Dictionary] = []
@@ -602,6 +639,139 @@ func _is_covered_by_generator(cell: Vector2i, generators: Array[Dictionary]) -> 
 
 	return false
 
+func _update_shop(dt: float) -> bool:
+	var changed_shop := false
+	shop_spawn_timer -= dt * get_shop_demand()
+	if shop_spawn_timer <= 0.0 and shop_customers.size() < Config.SHOP_CUSTOMER_CAPACITY:
+		spawn_shop_customer(-1, false)
+		shop_spawn_timer = Config.SHOP_CUSTOMER_SPAWN_MIN + rng.randf() * Config.SHOP_CUSTOMER_SPAWN_VARIANCE
+		changed_shop = true
+
+	for index in range(shop_customers.size() - 1, -1, -1):
+		var customer: Dictionary = shop_customers[index]
+		changed_shop = _update_customer(customer, dt) or changed_shop
+		if bool(customer.get("done", false)):
+			shop_customers.remove_at(index)
+			changed_shop = true
+		else:
+			shop_customers[index] = customer
+
+	return changed_shop
+
+func _update_customer(customer: Dictionary, dt: float) -> bool:
+	var customer_state := String(customer.get("state", Config.CUSTOMER_ENTERING))
+	if customer_state == Config.CUSTOMER_ENTERING:
+		_move_customer(customer, dt, float(customer.get("target_x", 0.34)), float(customer.get("target_y", 0.58)))
+		if _customer_distance_squared(customer, float(customer.get("target_x", 0.34)), float(customer.get("target_y", 0.58))) < Config.SHOP_CUSTOMER_TARGET_EPSILON:
+			customer["state"] = Config.CUSTOMER_SHOPPING
+			customer["wait"] = _get_shopping_wait()
+		return true
+
+	if customer_state == Config.CUSTOMER_SHOPPING:
+		customer["wait"] = float(customer.get("wait", 0.0)) - dt
+		if float(customer["wait"]) <= 0.0:
+			_try_customer_purchase(customer)
+		return true
+
+	if customer_state == Config.CUSTOMER_CHECKOUT:
+		_move_customer(customer, dt, 0.68, 0.64)
+		if _customer_distance_squared(customer, 0.68, 0.64) < Config.SHOP_CUSTOMER_TARGET_EPSILON:
+			customer["state"] = Config.CUSTOMER_LEAVING
+		return true
+
+	if customer_state == Config.CUSTOMER_LEAVING:
+		_move_customer(customer, dt, 0.92, 0.92)
+		if float(customer.get("x", 0.0)) > 0.88 and float(customer.get("y", 0.0)) > 0.88:
+			customer["done"] = true
+		return true
+
+	return false
+
+func _move_customer(customer: Dictionary, dt: float, target_x: float, target_y: float) -> void:
+	var current_x := float(customer.get("x", 0.0))
+	var current_y := float(customer.get("y", 0.0))
+	var dx := target_x - current_x
+	var dy := target_y - current_y
+	var distance := sqrt(dx * dx + dy * dy)
+	if distance <= 0.0:
+		customer["x"] = target_x
+		customer["y"] = target_y
+		return
+
+	var step := minf(Config.SHOP_CUSTOMER_SPEED * dt, distance)
+	customer["x"] = current_x + (dx / distance) * step
+	customer["y"] = current_y + (dy / distance) * step
+
+func _customer_distance_squared(customer: Dictionary, target_x: float, target_y: float) -> float:
+	var dx := float(customer.get("x", 0.0)) - target_x
+	var dy := float(customer.get("y", 0.0)) - target_y
+	return dx * dx + dy * dy
+
+func _get_shopping_wait() -> float:
+	return Config.SHOP_CUSTOMER_WAIT_MIN + rng.randf() * Config.SHOP_CUSTOMER_WAIT_VARIANCE
+
+func _try_customer_purchase(customer: Dictionary) -> void:
+	if get_shop_stock() <= 0:
+		shop_customers_lost += 1
+		shop_reputation = maxf(0.0, shop_reputation - Config.SHOP_REPUTATION_STOCKOUT_PENALTY)
+		customer["lost_reason"] = "stock"
+		customer["state"] = Config.CUSTOMER_LEAVING
+		return
+
+	if shop_price > int(customer.get("budget", 0)):
+		shop_customers_lost += 1
+		shop_reputation = maxf(0.0, shop_reputation - Config.SHOP_REPUTATION_PRICE_PENALTY)
+		customer["lost_reason"] = "price"
+		customer["state"] = Config.CUSTOMER_LEAVING
+		return
+
+	if _consume_shop_stock(1) <= 0:
+		shop_customers_lost += 1
+		shop_reputation = maxf(0.0, shop_reputation - Config.SHOP_REPUTATION_STOCKOUT_PENALTY)
+		customer["lost_reason"] = "stock"
+		customer["state"] = Config.CUSTOMER_LEAVING
+		return
+
+	shop_sales += 1
+	shop_customers_served += 1
+	shop_revenue += shop_price
+	money += shop_price
+	shop_reputation = minf(100.0, shop_reputation + Config.SHOP_REPUTATION_SALE_GAIN)
+	customer["bought"] = true
+	customer["state"] = Config.CUSTOMER_CHECKOUT
+
+func _consume_shop_stock(amount: int, premium_only := false) -> int:
+	var consumed := 0
+	while consumed < amount:
+		var stock_index := _find_consumable_shop_stock(premium_only)
+		if stock_index < 0:
+			break
+
+		var part: Dictionary = shop_inventory[stock_index]
+		shop_inventory.remove_at(stock_index)
+		if bool(part.get("premium", false)):
+			shop_consumed_premium += 1
+		else:
+			shop_consumed_base += 1
+		consumed += 1
+
+	return consumed
+
+func _find_consumable_shop_stock(premium_only: bool) -> int:
+	for index in range(shop_inventory.size()):
+		var base_candidate: Dictionary = shop_inventory[index]
+		if bool(base_candidate.get("premium", false)):
+			continue
+		if not premium_only:
+			return index
+
+	for index in range(shop_inventory.size()):
+		var premium_candidate: Dictionary = shop_inventory[index]
+		if bool(premium_candidate.get("premium", false)):
+			return index
+
+	return -1
+
 func _store_part(part: Dictionary) -> void:
 	var stored_part := _make_stored_part(part)
 	shop_inventory.append(stored_part)
@@ -662,6 +832,7 @@ func _serialize_shop() -> Dictionary:
 		"customers_lost": shop_customers_lost,
 		"sales": shop_sales,
 		"revenue": shop_revenue,
+		"spawn_timer": shop_spawn_timer,
 		"base_stock": get_shop_base_stock(),
 		"premium_stock": get_shop_premium_stock(),
 		"quality_sum": shop_quality_sum,
@@ -685,6 +856,7 @@ func _load_shop_snapshot(raw_shop: Variant) -> void:
 	shop_customers_lost = max(0, int(source.get("customers_lost", source.get("customersLost", 0))))
 	shop_sales = max(0, int(source.get("sales", 0)))
 	shop_revenue = max(0, int(source.get("revenue", 0)))
+	shop_spawn_timer = maxf(0.1, float(source.get("spawn_timer", source.get("spawnTimer", Config.SHOP_CUSTOMER_INITIAL_SPAWN))))
 	shop_consumed_base = max(0, int(source.get("consumed_base", source.get("consumedBase", 0))))
 	shop_consumed_premium = max(0, int(source.get("consumed_premium", source.get("consumedPremium", 0))))
 	shop_inventory = _deserialize_shop_inventory(source)
@@ -707,6 +879,8 @@ func _reset_shop_state() -> void:
 	shop_premium_produced = 0
 	shop_consumed_base = 0
 	shop_consumed_premium = 0
+	shop_spawn_timer = Config.SHOP_CUSTOMER_INITIAL_SPAWN
+	shop_customers = []
 
 func _seed_shop_from_legacy_parts(count: int) -> void:
 	for _index in range(max(0, count)):

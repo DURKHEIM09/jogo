@@ -79,12 +79,34 @@ const SHOP_DEMAND_PRICE_MAX := 1.65
 const SHOP_DEMAND_REPUTATION_MIN := 0.45
 const SHOP_DEMAND_REPUTATION_MAX := 1.7
 const SHOP_EMPTY_STOCK_DEMAND_FACTOR := 0.35
+const SHOP_CUSTOMER_CAPACITY := 6
+const SHOP_CUSTOMER_INITIAL_SPAWN := 1.4
+const SHOP_CUSTOMER_SPAWN_MIN := 2.4
+const SHOP_CUSTOMER_SPAWN_VARIANCE := 2.8
+const SHOP_CUSTOMER_SPEED := 0.18
+const SHOP_CUSTOMER_TARGET_EPSILON := 0.002
+const SHOP_CUSTOMER_BUDGET_BASE := 9
+const SHOP_CUSTOMER_BUDGET_RANGE := 14
+const SHOP_CUSTOMER_BUDGET_REPUTATION_DIVISOR := 18.0
+const SHOP_CUSTOMER_WAIT_MIN := 1.1
+const SHOP_CUSTOMER_WAIT_VARIANCE := 1.2
+const SHOP_REPUTATION_STOCKOUT_PENALTY := 1.4
+const SHOP_REPUTATION_PRICE_PENALTY := 0.9
+const SHOP_REPUTATION_SALE_GAIN := 0.45
+const COLOR_CUSTOMER_A := Color(0.463, 0.847, 1.0, 1.0)
+const COLOR_CUSTOMER_B := Color(0.957, 0.714, 0.302, 1.0)
+const COLOR_CUSTOMER_C := Color(1.0, 0.561, 0.639, 1.0)
+const COLOR_CUSTOMER_BOUGHT := Color(0.537, 0.918, 0.643, 1.0)
 
 const ITEM_ORE := "ore"
 const ITEM_PART := "part"
 
 const MODE_FACTORY := "factory"
 const MODE_SHOP := "shop"
+const CUSTOMER_ENTERING := "entering"
+const CUSTOMER_SHOPPING := "shopping"
+const CUSTOMER_CHECKOUT := "checkout"
+const CUSTOMER_LEAVING := "leaving"
 
 const TOOL_BELT := "belt"
 const TOOL_INSERTER := "inserter"
@@ -107,6 +129,17 @@ static func is_known_tool(tool: String) -> bool:
 
 static func is_known_mode(next_mode: String) -> bool:
 	return next_mode == MODE_FACTORY or next_mode == MODE_SHOP
+
+static func customer_color(index: int, bought: bool) -> Color:
+	if bought:
+		return COLOR_CUSTOMER_BOUGHT
+	match posmod(index, 3):
+		0:
+			return COLOR_CUSTOMER_A
+		1:
+			return COLOR_CUSTOMER_B
+		_:
+			return COLOR_CUSTOMER_C
 
 static func is_directional_tool(tool: String) -> bool:
 	return (
