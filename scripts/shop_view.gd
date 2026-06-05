@@ -18,6 +18,7 @@ func _draw() -> void:
 	_draw_checkout(view_size)
 	_draw_door(view_size)
 	_draw_stock(view_size)
+	_draw_employee(view_size)
 	_draw_customers(view_size)
 
 func _draw_floor_grid(view_size: Vector2) -> void:
@@ -69,6 +70,20 @@ func _draw_stock(view_size: Vector2) -> void:
 		var color := Config.COLOR_ITEM_PREMIUM if bool(item.get("premium", false)) else Config.COLOR_ITEM_PART
 		draw_circle(position, 7.0, color)
 		draw_circle(position, 10.0, Color(color.r, color.g, color.b, 0.22))
+
+func _draw_employee(view_size: Vector2) -> void:
+	if factory_state == null:
+		return
+
+	var employee: Dictionary = factory_state.get_shop_employee()
+	if not bool(employee.get("hired", false)):
+		return
+
+	var position := Vector2(view_size.x * 0.71, view_size.y * 0.57)
+	var color := Config.COLOR_EMPLOYEE if bool(employee.get("active", false)) else Config.COLOR_EMPLOYEE_OFF
+	draw_circle(position, 9.0, color)
+	draw_circle(position, 14.0, Color(color.r, color.g, color.b, 0.24))
+	draw_rect(Rect2(position + Vector2(-2.0, -1.0), Vector2(4.0, 7.0)), Config.COLOR_BACKGROUND_PANEL)
 
 func _draw_customers(view_size: Vector2) -> void:
 	if factory_state == null:

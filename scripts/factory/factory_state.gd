@@ -35,6 +35,7 @@ var shop_consumed_base := 0
 var shop_consumed_premium := 0
 var shop_spawn_timer := Config.SHOP_CUSTOMER_INITIAL_SPAWN
 var shop_customers := []
+var shop_employee := {}
 var market_timer := Config.MARKET_INITIAL_TIMER
 var market_quotes := {}
 var market_ore_sold := 0
@@ -43,6 +44,7 @@ var market_revenue := 0
 
 func _init() -> void:
 	rng.randomize()
+	_reset_shop_state()
 	_reset_market_state()
 	_generate_resources()
 
@@ -76,6 +78,7 @@ func tick(delta: float) -> void:
 
 	changed_this_tick = _update_items(dt) or changed_this_tick
 	changed_this_tick = _update_market(dt) or changed_this_tick
+	changed_this_tick = _update_employee(dt) or changed_this_tick
 	changed_this_tick = _update_shop(dt) or changed_this_tick
 
 	if changed_this_tick:
@@ -160,6 +163,15 @@ func get_shop_average_quality() -> float:
 		return Config.DEFAULT_ITEM_QUALITY
 	return shop_quality_sum / float(shop_quality_count)
 
+func get_shop_employee() -> Dictionary:
+	return shop_employee.duplicate(true)
+
+func employee_available() -> bool:
+	return bool(shop_employee.get("hired", false)) and bool(shop_employee.get("active", false))
+
+func get_customer_capacity() -> int:
+	return Config.EMPLOYEE_CUSTOMER_CAPACITY if employee_available() else Config.SHOP_CUSTOMER_CAPACITY
+
 func set_shop_price(next_price: int) -> bool:
 	var clamped_price: int = max(Config.SHOP_MIN_PRICE, min(Config.SHOP_MAX_PRICE, next_price))
 	if shop_price == clamped_price:
@@ -187,6 +199,8 @@ func get_shop_demand() -> float:
 
 func get_shop_report() -> Dictionary:
 	var demand := get_shop_demand()
+	var employee_report := get_employee_report()
+	var direct_costs := int(employee_report["salary_paid"]) + int(employee_report["hiring_paid"])
 	return {
 		"stock": get_shop_stock(),
 		"base_stock": get_shop_base_stock(),
@@ -198,13 +212,84 @@ func get_shop_report() -> Dictionary:
 		"customers_served": shop_customers_served,
 		"customers_lost": shop_customers_lost,
 		"customers_active": shop_customers.size(),
+		"customer_capacity": get_customer_capacity(),
 		"sales": shop_sales,
 		"revenue": shop_revenue,
-		"gross_profit": shop_revenue,
+		"salaries": int(employee_report["salary_paid"]),
+		"hiring": int(employee_report["hiring_paid"]),
+		"direct_costs": direct_costs,
+		"gross_profit": shop_revenue - direct_costs,
 		"average_quality": get_shop_average_quality(),
 		"best_quality": shop_best_quality,
 		"premium_produced": shop_premium_produced,
+		"employee": employee_report,
 		"bottleneck": _get_shop_bottleneck(demand),
+	}
+
+func get_employee_report() -> Dictionary:
+	var hired := bool(shop_employee.get("hired", false))
+	var active := bool(shop_employee.get("active", false))
+	var status := "vaga"
+	if hired:
+		status = "ativa" if active else "sem salario"
+	return {
+		"hired": hired,
+		"active": active,
+		"status": status,
+		"name": String(shop_employee.get("name", Config.EMPLOYEE_NAME)),
+		"role": String(shop_employee.get("role", Config.EMPLOYEE_ROLE)),
+		"hiring_cost": int(shop_employee.get("hiring_cost", Config.EMPLOYEE_HIRING_COST)),
+		"wage": int(shop_employee.get("wage", Config.EMPLOYEE_WAGE)),
+		"wage_cycle": float(shop_employee.get("wage_cycle", Config.EMPLOYEE_WAGE_CYCLE)),
+		"wage_timer": float(shop_employee.get("wage_timer", Config.EMPLOYEE_WAGE_CYCLE)),
+		"productivity": float(shop_employee.get("productivity", Config.EMPLOYEE_PRODUCTIVITY)),
+		"reliability": float(shop_employee.get("reliability", Config.EMPLOYEE_RELIABILITY)),
+		"effective_reliability": _employee_effective_reliability(),
+		"morale": float(shop_employee.get("morale", Config.EMPLOYEE_INITIAL_MORALE)),
+		"salary_paid": int(shop_employee.get("salary_paid", 0)),
+		"hiring_paid": int(shop_employee.get("hiring_paid", 0)),
+		"service_count": int(shop_employee.get("service_count", 0)),
+		"service_fails": int(shop_employee.get("service_fails", 0)),
+		"missed_payroll": int(shop_employee.get("missed_payroll", 0)),
+	}
+
+func toggle_employee() -> Dictionary:
+	if bool(shop_employee.get("hired", false)):
+		shop_employee["hired"] = false
+		shop_employee["active"] = false
+		shop_employee["wage_timer"] = Config.EMPLOYEE_WAGE_CYCLE
+		emit_signal("changed")
+		return {
+			"ok": true,
+			"action": "dismissed",
+			"message": "Nina demitida.",
+			"money": money,
+			"money_delta": 0,
+		}
+
+	var hiring_cost := int(shop_employee.get("hiring_cost", Config.EMPLOYEE_HIRING_COST))
+	if money < hiring_cost:
+		return {
+			"ok": false,
+			"action": "blocked",
+			"message": "Creditos insuficientes para contratar Nina.",
+			"money": money,
+			"money_delta": 0,
+		}
+
+	money -= hiring_cost
+	shop_employee["hiring_paid"] = int(shop_employee.get("hiring_paid", 0)) + hiring_cost
+	shop_employee["hired"] = true
+	shop_employee["active"] = true
+	shop_employee["wage_timer"] = Config.EMPLOYEE_WAGE_CYCLE
+	shop_employee["morale"] = Config.EMPLOYEE_INITIAL_MORALE
+	emit_signal("changed")
+	return {
+		"ok": true,
+		"action": "hired",
+		"message": "Nina contratada.",
+		"money": money,
+		"money_delta": -hiring_cost,
 	}
 
 func get_market_quote(item_type: String) -> Dictionary:
@@ -239,7 +324,7 @@ func sell_base_part_to_market(amount := 1) -> int:
 	return _sell_to_market(Config.ITEM_PART, quantity)
 
 func spawn_shop_customer(budget: int = -1, notify: bool = true) -> Dictionary:
-	if shop_customers.size() >= Config.SHOP_CUSTOMER_CAPACITY:
+	if shop_customers.size() >= get_customer_capacity():
 		return {}
 
 	var next_budget := int(budget)
@@ -743,10 +828,34 @@ func _sell_to_market(item_type: String, quantity: int) -> int:
 	market_quotes[item_type] = _refresh_market_quote(stored_quote, item_type)
 	return revenue
 
+func _update_employee(dt: float) -> bool:
+	if not bool(shop_employee.get("hired", false)):
+		return false
+
+	shop_employee["wage_timer"] = float(shop_employee.get("wage_timer", Config.EMPLOYEE_WAGE_CYCLE)) - dt
+	if float(shop_employee["wage_timer"]) > 0.0:
+		return false
+
+	if money >= int(shop_employee.get("wage", Config.EMPLOYEE_WAGE)):
+		var wage := int(shop_employee.get("wage", Config.EMPLOYEE_WAGE))
+		money -= wage
+		shop_employee["salary_paid"] = int(shop_employee.get("salary_paid", 0)) + wage
+		shop_employee["wage_timer"] = float(shop_employee.get("wage_timer", 0.0)) + Config.EMPLOYEE_WAGE_CYCLE
+		shop_employee["active"] = true
+		shop_employee["morale"] = minf(100.0, float(shop_employee.get("morale", Config.EMPLOYEE_INITIAL_MORALE)) + Config.EMPLOYEE_PAY_MORALE_GAIN)
+		return true
+
+	shop_employee["active"] = false
+	shop_employee["missed_payroll"] = int(shop_employee.get("missed_payroll", 0)) + 1
+	shop_employee["wage_timer"] = Config.EMPLOYEE_WAGE_RETRY_DELAY
+	shop_employee["morale"] = maxf(0.0, float(shop_employee.get("morale", Config.EMPLOYEE_INITIAL_MORALE)) - Config.EMPLOYEE_MISSED_PAYROLL_MORALE_PENALTY)
+	shop_reputation = maxf(0.0, shop_reputation - Config.EMPLOYEE_MISSED_PAYROLL_REPUTATION_PENALTY)
+	return true
+
 func _update_shop(dt: float) -> bool:
 	var changed_shop := false
 	shop_spawn_timer -= dt * get_shop_demand()
-	if shop_spawn_timer <= 0.0 and shop_customers.size() < Config.SHOP_CUSTOMER_CAPACITY:
+	if shop_spawn_timer <= 0.0 and shop_customers.size() < get_customer_capacity():
 		spawn_shop_customer(-1, false)
 		shop_spawn_timer = Config.SHOP_CUSTOMER_SPAWN_MIN + rng.randf() * Config.SHOP_CUSTOMER_SPAWN_VARIANCE
 		changed_shop = true
@@ -812,7 +921,32 @@ func _customer_distance_squared(customer: Dictionary, target_x: float, target_y:
 	return dx * dx + dy * dy
 
 func _get_shopping_wait() -> float:
-	return Config.SHOP_CUSTOMER_WAIT_MIN + rng.randf() * Config.SHOP_CUSTOMER_WAIT_VARIANCE
+	var base_wait := Config.SHOP_CUSTOMER_WAIT_MIN + rng.randf() * Config.SHOP_CUSTOMER_WAIT_VARIANCE
+	if not employee_available():
+		return base_wait
+
+	if rng.randf() <= _employee_effective_reliability():
+		shop_employee["service_count"] = int(shop_employee.get("service_count", 0)) + 1
+		shop_employee["morale"] = minf(100.0, float(shop_employee.get("morale", Config.EMPLOYEE_INITIAL_MORALE)) + Config.EMPLOYEE_SERVICE_MORALE_GAIN)
+		return base_wait / float(shop_employee.get("productivity", Config.EMPLOYEE_PRODUCTIVITY))
+
+	shop_employee["service_fails"] = int(shop_employee.get("service_fails", 0)) + 1
+	shop_employee["morale"] = maxf(0.0, float(shop_employee.get("morale", Config.EMPLOYEE_INITIAL_MORALE)) - Config.EMPLOYEE_SERVICE_FAIL_MORALE_PENALTY)
+	return base_wait * Config.EMPLOYEE_SERVICE_FAIL_WAIT_MULTIPLIER
+
+func _employee_effective_reliability() -> float:
+	if not bool(shop_employee.get("hired", false)):
+		return 0.0
+	var morale_factor := clampf(
+		float(shop_employee.get("morale", Config.EMPLOYEE_INITIAL_MORALE)) / Config.EMPLOYEE_INITIAL_MORALE,
+		Config.EMPLOYEE_MORALE_FACTOR_MIN,
+		Config.EMPLOYEE_MORALE_FACTOR_MAX
+	)
+	return clampf(
+		float(shop_employee.get("reliability", Config.EMPLOYEE_RELIABILITY)) * morale_factor,
+		Config.EMPLOYEE_RELIABILITY_MIN,
+		Config.EMPLOYEE_RELIABILITY_MAX
+	)
 
 func _try_customer_purchase(customer: Dictionary) -> void:
 	if get_shop_stock() <= 0:
@@ -840,9 +974,12 @@ func _try_customer_purchase(customer: Dictionary) -> void:
 	shop_customers_served += 1
 	shop_revenue += shop_price
 	money += shop_price
-	shop_reputation = minf(100.0, shop_reputation + Config.SHOP_REPUTATION_SALE_GAIN)
+	shop_reputation = minf(100.0, shop_reputation + _sale_reputation_gain())
 	customer["bought"] = true
 	customer["state"] = Config.CUSTOMER_CHECKOUT
+
+func _sale_reputation_gain() -> float:
+	return Config.EMPLOYEE_REPUTATION_SALE_GAIN if employee_available() else Config.SHOP_REPUTATION_SALE_GAIN
 
 func _consume_shop_stock(amount: int, premium_only := false) -> int:
 	var consumed := 0
@@ -931,6 +1068,14 @@ func _shop_demand_label(demand: float) -> String:
 func _get_shop_bottleneck(demand: float) -> String:
 	if get_shop_stock() <= 0:
 		return "estoque"
+	if bool(shop_employee.get("hired", false)) and not bool(shop_employee.get("active", false)):
+		return "salario"
+	if shop_customers.size() >= get_customer_capacity() - 1:
+		return "fila"
+	if not employee_available() and shop_customers.size() >= 3:
+		return "atendimento"
+	if int(shop_employee.get("service_fails", 0)) > max(2, int(float(shop_employee.get("service_count", 0)) * 0.35)):
+		return "confiab."
 	if demand <= 0.72:
 		return "demanda"
 	if shop_price >= 20 and shop_customers_lost > max(1, shop_customers_served):
@@ -965,7 +1110,28 @@ func _serialize_shop() -> Dictionary:
 		"premium_produced": shop_premium_produced,
 		"consumed_base": shop_consumed_base,
 		"consumed_premium": shop_consumed_premium,
+		"employee": _serialize_employee(),
 		"inventory": _serialize_items(shop_inventory),
+	}
+
+func _serialize_employee() -> Dictionary:
+	return {
+		"hired": bool(shop_employee.get("hired", false)),
+		"active": bool(shop_employee.get("active", false)),
+		"name": String(shop_employee.get("name", Config.EMPLOYEE_NAME)),
+		"role": String(shop_employee.get("role", Config.EMPLOYEE_ROLE)),
+		"hiring_cost": int(shop_employee.get("hiring_cost", Config.EMPLOYEE_HIRING_COST)),
+		"wage": int(shop_employee.get("wage", Config.EMPLOYEE_WAGE)),
+		"wage_cycle": float(shop_employee.get("wage_cycle", Config.EMPLOYEE_WAGE_CYCLE)),
+		"wage_timer": float(shop_employee.get("wage_timer", Config.EMPLOYEE_WAGE_CYCLE)),
+		"productivity": float(shop_employee.get("productivity", Config.EMPLOYEE_PRODUCTIVITY)),
+		"reliability": float(shop_employee.get("reliability", Config.EMPLOYEE_RELIABILITY)),
+		"morale": float(shop_employee.get("morale", Config.EMPLOYEE_INITIAL_MORALE)),
+		"salary_paid": int(shop_employee.get("salary_paid", 0)),
+		"hiring_paid": int(shop_employee.get("hiring_paid", 0)),
+		"service_count": int(shop_employee.get("service_count", 0)),
+		"service_fails": int(shop_employee.get("service_fails", 0)),
+		"missed_payroll": int(shop_employee.get("missed_payroll", 0)),
 	}
 
 func _serialize_market() -> Dictionary:
@@ -1011,6 +1177,7 @@ func _load_shop_snapshot(raw_shop: Variant) -> void:
 	shop_quality_count = max(0, int(source.get("quality_count", source.get("qualityCount", shop_inventory.size()))))
 	shop_best_quality = maxf(Config.DEFAULT_ITEM_QUALITY, float(source.get("best_quality", source.get("bestQuality", _best_shop_inventory_quality()))))
 	shop_premium_produced = max(0, int(source.get("premium_produced", source.get("premiumProduced", get_shop_premium_stock()))))
+	shop_employee = _deserialize_employee(source.get("employee", {}))
 
 func _reset_shop_state() -> void:
 	shop_inventory = []
@@ -1028,6 +1195,46 @@ func _reset_shop_state() -> void:
 	shop_consumed_premium = 0
 	shop_spawn_timer = Config.SHOP_CUSTOMER_INITIAL_SPAWN
 	shop_customers = []
+	shop_employee = _create_employee_state(false)
+
+func _create_employee_state(hired: bool) -> Dictionary:
+	return {
+		"hired": hired,
+		"active": hired,
+		"name": Config.EMPLOYEE_NAME,
+		"role": Config.EMPLOYEE_ROLE,
+		"hiring_cost": Config.EMPLOYEE_HIRING_COST,
+		"wage": Config.EMPLOYEE_WAGE,
+		"wage_cycle": Config.EMPLOYEE_WAGE_CYCLE,
+		"wage_timer": Config.EMPLOYEE_WAGE_CYCLE,
+		"productivity": Config.EMPLOYEE_PRODUCTIVITY,
+		"reliability": Config.EMPLOYEE_RELIABILITY,
+		"morale": Config.EMPLOYEE_INITIAL_MORALE,
+		"salary_paid": 0,
+		"hiring_paid": 0,
+		"service_count": 0,
+		"service_fails": 0,
+		"missed_payroll": 0,
+	}
+
+func _deserialize_employee(raw_employee: Variant) -> Dictionary:
+	var employee := _create_employee_state(false)
+	if typeof(raw_employee) != TYPE_DICTIONARY:
+		return employee
+
+	var source: Dictionary = raw_employee
+	employee["hired"] = bool(source.get("hired", false))
+	employee["active"] = bool(source.get("active", employee["hired"])) and bool(employee["hired"])
+	employee["wage_timer"] = clampf(float(source.get("wage_timer", source.get("wageTimer", Config.EMPLOYEE_WAGE_CYCLE))), 1.0, Config.EMPLOYEE_WAGE_CYCLE)
+	employee["productivity"] = maxf(0.1, float(source.get("productivity", Config.EMPLOYEE_PRODUCTIVITY)))
+	employee["reliability"] = maxf(0.0, float(source.get("reliability", Config.EMPLOYEE_RELIABILITY)))
+	employee["morale"] = clampf(float(source.get("morale", Config.EMPLOYEE_INITIAL_MORALE)), 0.0, 100.0)
+	employee["salary_paid"] = max(0, int(source.get("salary_paid", source.get("salaryPaid", 0))))
+	employee["hiring_paid"] = max(0, int(source.get("hiring_paid", source.get("hiringPaid", 0))))
+	employee["service_count"] = max(0, int(source.get("service_count", source.get("serviceCount", 0))))
+	employee["service_fails"] = max(0, int(source.get("service_fails", source.get("serviceFails", 0))))
+	employee["missed_payroll"] = max(0, int(source.get("missed_payroll", source.get("missedPayroll", 0))))
+	return employee
 
 func _load_market_snapshot(raw_market: Variant) -> void:
 	_reset_market_state()

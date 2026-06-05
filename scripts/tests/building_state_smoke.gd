@@ -341,6 +341,136 @@ func _ready() -> void:
 	if not _expect(high_reputation_demand > low_reputation_demand, "demand did not react to reputation"):
 		return
 
+	var employee_shop = FactoryStateScript.new()
+	employee_shop.shop_spawn_timer = 999.0
+	var initial_employee: Dictionary = employee_shop.get_employee_report()
+	if not _expect(not bool(initial_employee["hired"]) and String(initial_employee["status"]) == "vaga", "employee should start vacant"):
+		return
+	if not _expect(employee_shop.get_customer_capacity() == Config.SHOP_CUSTOMER_CAPACITY, "base customer capacity mismatch"):
+		return
+	for _index in range(Config.SHOP_CUSTOMER_CAPACITY):
+		employee_shop.spawn_shop_customer(Config.SHOP_INITIAL_PRICE)
+	if not _expect(employee_shop.get_shop_customers().size() == Config.SHOP_CUSTOMER_CAPACITY, "base customer capacity did not cap at 6"):
+		return
+	if not _expect(employee_shop.spawn_shop_customer(Config.SHOP_INITIAL_PRICE).is_empty(), "base customer capacity accepted extra customer"):
+		return
+
+	var employee_money_before: int = employee_shop.money
+	var hired_result: Dictionary = employee_shop.toggle_employee()
+	if not _expect(bool(hired_result["ok"]) and String(hired_result["action"]) == "hired", "employee hire failed"):
+		return
+	if not _expect(employee_shop.money == employee_money_before - Config.EMPLOYEE_HIRING_COST, "employee hire cost mismatch"):
+		return
+	if not _expect(employee_shop.employee_available(), "employee should be active after hire"):
+		return
+	if not _expect(employee_shop.get_customer_capacity() == Config.EMPLOYEE_CUSTOMER_CAPACITY, "employee did not increase customer capacity"):
+		return
+	for _index in range(Config.EMPLOYEE_CUSTOMER_CAPACITY - Config.SHOP_CUSTOMER_CAPACITY):
+		employee_shop.spawn_shop_customer(Config.SHOP_INITIAL_PRICE)
+	if not _expect(employee_shop.get_shop_customers().size() == Config.EMPLOYEE_CUSTOMER_CAPACITY, "employee capacity did not cap at 10"):
+		return
+	if not _expect(employee_shop.spawn_shop_customer(Config.SHOP_INITIAL_PRICE).is_empty(), "employee capacity accepted extra customer"):
+		return
+	var employee_hire_report: Dictionary = employee_shop.get_shop_report()
+	if not _expect(int(employee_hire_report["hiring"]) == Config.EMPLOYEE_HIRING_COST, "employee hiring cost missing from report"):
+		return
+	if not _expect(int(employee_hire_report["gross_profit"]) == -Config.EMPLOYEE_HIRING_COST, "employee hiring cost not deducted from gross profit"):
+		return
+
+	var dismissed_result: Dictionary = employee_shop.toggle_employee()
+	if not _expect(bool(dismissed_result["ok"]) and String(dismissed_result["action"]) == "dismissed", "employee dismiss failed"):
+		return
+	if not _expect(not employee_shop.employee_available() and employee_shop.get_customer_capacity() == Config.SHOP_CUSTOMER_CAPACITY, "dismissed employee should remove active capacity"):
+		return
+
+	var broke_shop = FactoryStateScript.new()
+	broke_shop.money = Config.EMPLOYEE_HIRING_COST - 1
+	var blocked_hire: Dictionary = broke_shop.toggle_employee()
+	if not _expect(not bool(blocked_hire["ok"]), "employee hire should require credits"):
+		return
+	if not _expect(not bool(broke_shop.get_employee_report()["hired"]), "blocked hire should not hire employee"):
+		return
+
+	var payroll_shop = FactoryStateScript.new()
+	payroll_shop.shop_spawn_timer = 999.0
+	payroll_shop.toggle_employee()
+	var payroll_money_after_hire: int = payroll_shop.money
+	_advance(payroll_shop, Config.EMPLOYEE_WAGE_CYCLE + 0.25)
+	var payroll_employee: Dictionary = payroll_shop.get_employee_report()
+	if not _expect(int(payroll_employee["salary_paid"]) == Config.EMPLOYEE_WAGE, "employee salary was not paid"):
+		return
+	if not _expect(payroll_shop.money == payroll_money_after_hire - Config.EMPLOYEE_WAGE, "employee salary did not debit money"):
+		return
+	if not _expect(bool(payroll_employee["active"]), "employee should stay active after paid salary"):
+		return
+	if not _expect(float(payroll_employee["morale"]) > Config.EMPLOYEE_INITIAL_MORALE, "paid salary did not improve morale"):
+		return
+	var payroll_report: Dictionary = payroll_shop.get_shop_report()
+	if not _expect(int(payroll_report["gross_profit"]) == -(Config.EMPLOYEE_HIRING_COST + Config.EMPLOYEE_WAGE), "salary/hiring not deducted from report profit"):
+		return
+	var payroll_snapshot: Dictionary = payroll_shop.to_snapshot()
+	var payroll_restored = FactoryStateScript.new()
+	if not _expect(payroll_restored.load_snapshot(payroll_snapshot), "employee snapshot load failed"):
+		return
+	var payroll_restored_employee: Dictionary = payroll_restored.get_employee_report()
+	if not _expect(bool(payroll_restored_employee["hired"]) and bool(payroll_restored_employee["active"]), "employee snapshot lost active hire"):
+		return
+	if not _expect(int(payroll_restored_employee["salary_paid"]) == Config.EMPLOYEE_WAGE, "employee snapshot salary mismatch"):
+		return
+
+	var late_shop = FactoryStateScript.new()
+	late_shop.shop_spawn_timer = 999.0
+	late_shop.toggle_employee()
+	late_shop.money = 0
+	var late_reputation_before: float = late_shop.shop_reputation
+	_advance(late_shop, Config.EMPLOYEE_WAGE_CYCLE + 0.25)
+	var late_employee: Dictionary = late_shop.get_employee_report()
+	if not _expect(not bool(late_employee["active"]), "late payroll should deactivate employee"):
+		return
+	if not _expect(int(late_employee["missed_payroll"]) == 1, "late payroll count mismatch"):
+		return
+	if not _expect(float(late_employee["morale"]) < Config.EMPLOYEE_INITIAL_MORALE, "late payroll did not reduce morale"):
+		return
+	if not _expect(late_shop.shop_reputation < late_reputation_before, "late payroll did not reduce reputation"):
+		return
+	late_shop.money = Config.EMPLOYEE_WAGE
+	_advance(late_shop, Config.EMPLOYEE_WAGE_RETRY_DELAY + 0.25)
+	var recovered_employee: Dictionary = late_shop.get_employee_report()
+	if not _expect(bool(recovered_employee["active"]) and int(recovered_employee["salary_paid"]) == Config.EMPLOYEE_WAGE, "employee did not recover after late payroll payment"):
+		return
+
+	var service_shop = FactoryStateScript.new()
+	service_shop.shop_spawn_timer = 999.0
+	service_shop.toggle_employee()
+	for _index in range(12):
+		service_shop._get_shopping_wait()
+	var service_employee: Dictionary = service_shop.get_employee_report()
+	if not _expect(int(service_employee["service_count"]) > 0, "employee reliability never produced faster service"):
+		return
+	if not _expect(float(service_employee["effective_reliability"]) > 0.0, "employee effective reliability missing"):
+		return
+
+	var employee_sale_shop = FactoryStateScript.new()
+	employee_sale_shop.shop_spawn_timer = 999.0
+	employee_sale_shop._store_part(_test_part(Config.DEFAULT_ITEM_QUALITY))
+	employee_sale_shop.toggle_employee()
+	var employee_sale_reputation_before: float = employee_sale_shop.shop_reputation
+	employee_sale_shop.spawn_shop_customer(employee_sale_shop.shop_price)
+	_advance(employee_sale_shop, 8.0)
+	if not _expect(employee_sale_shop.shop_sales == 1, "employee shop customer did not buy"):
+		return
+	if not _expect(employee_sale_shop.shop_reputation >= employee_sale_reputation_before + 0.6, "employee sale did not improve reputation more"):
+		return
+
+	var setup_quality_shop = FactoryStateScript.new()
+	var setup_cell := Vector2i(1, 1)
+	var setup_building := {"powered": true}
+	var setup_without_employee: float = setup_quality_shop._get_setup_quality(setup_cell, setup_building)
+	setup_quality_shop.toggle_employee()
+	var setup_with_employee: float = setup_quality_shop._get_setup_quality(setup_cell, setup_building)
+	if not _expect(is_equal_approx(setup_without_employee, setup_with_employee), "employee should not change factory setup quality"):
+		return
+
 	var ore_market = FactoryStateScript.new()
 	ore_market.shop_spawn_timer = 999.0
 	ore_market.select_tool(Config.TOOL_STORAGE)
