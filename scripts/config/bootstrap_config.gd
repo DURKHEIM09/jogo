@@ -25,6 +25,8 @@ const COLOR_TEXT_MUTED := Color(0.651, 0.702, 0.753, 1.0)
 const COLOR_ORE_FILL := Color(0.780, 0.478, 0.243, 0.24)
 const COLOR_ORE_DOT := Color(0.780, 0.478, 0.243, 1.0)
 const COLOR_ORE_GLOW := Color(0.957, 0.714, 0.302, 0.38)
+const COLOR_UNPOWERED := Color(0.984, 0.251, 0.337, 1.0)
+const COLOR_UNPOWERED_FILL := Color(0.984, 0.251, 0.337, 0.22)
 
 const INITIAL_MONEY := 320
 const BUILDING_REFUND_RATE := 0.45
@@ -46,6 +48,11 @@ const BELT_INSERT_PROGRESS := 0.12
 const BLOCKED_ITEM_PROGRESS := 0.98
 const SIMULATION_DT_CLAMP := 0.25
 const RATE_WINDOW_SECONDS := 60.0
+const POWER_GENERATOR_OUTPUT := 90
+const POWER_GENERATOR_RADIUS := 7
+const POWER_USAGE_MINER := 10
+const POWER_USAGE_ASSEMBLER := 18
+const POWER_USAGE_INSERTER := 4
 const COLOR_ITEM_ORE := Color(0.957, 0.714, 0.302, 1.0)
 const COLOR_ITEM_PART := Color(0.322, 0.722, 0.910, 1.0)
 const COLOR_ITEM_PREMIUM := Color(0.537, 0.918, 0.643, 1.0)
@@ -101,6 +108,17 @@ static func tool_cost(tool: String) -> int:
 			return 24
 		TOOL_GENERATOR:
 			return 60
+		_:
+			return 0
+
+static func power_need(tool: String) -> int:
+	match tool:
+		TOOL_MINER:
+			return POWER_USAGE_MINER
+		TOOL_ASSEMBLER:
+			return POWER_USAGE_ASSEMBLER
+		TOOL_INSERTER:
+			return POWER_USAGE_INSERTER
 		_:
 			return 0
 

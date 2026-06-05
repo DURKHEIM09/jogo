@@ -96,6 +96,8 @@ func _draw_buildings() -> void:
 		draw_rect(rect, Config.tool_color(tool))
 		draw_rect(rect, Config.COLOR_BUILDING_BORDER, false, 2.0)
 		_draw_building_symbol(rect, building)
+		if Config.power_need(tool) > 0 and not bool(building.get("powered", true)):
+			_draw_unpowered_warning(rect)
 
 func _draw_building_symbol(rect: Rect2, building: Dictionary) -> void:
 	var tool := String(building.get("type", ""))
@@ -141,6 +143,15 @@ func _draw_selection() -> void:
 
 	if _is_valid_cell(hovered_cell) and hovered_cell != selected_cell:
 		draw_rect(_cell_rect(hovered_cell), Config.COLOR_HOVER)
+
+func _draw_unpowered_warning(rect: Rect2) -> void:
+	draw_rect(rect, Config.COLOR_UNPOWERED_FILL)
+	draw_rect(rect, Config.COLOR_UNPOWERED, false, 2.4)
+	var top := rect.position + Vector2(rect.size.x * 0.62, rect.size.y * 0.20)
+	var mid := rect.position + Vector2(rect.size.x * 0.38, rect.size.y * 0.53)
+	var bottom := rect.position + Vector2(rect.size.x * 0.58, rect.size.y * 0.53)
+	var tail := rect.position + Vector2(rect.size.x * 0.36, rect.size.y * 0.82)
+	draw_polyline(PackedVector2Array([top, mid, bottom, tail]), Config.COLOR_UNPOWERED, 2.6)
 
 func _draw_grid_lines(grid_size: Vector2) -> void:
 	for x in range(Config.GRID_COLUMNS + 1):

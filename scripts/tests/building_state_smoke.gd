@@ -50,10 +50,26 @@ func _ready() -> void:
 	var ore_cell: Vector2i = _first_ore_cell_with_right_room(state, 8)
 	if not _expect(ore_cell != Vector2i(-1, -1), "could not find ore cell with enough right-side room"):
 		return
+
+	var generator_cell := _generator_cell_for(ore_cell)
+	state.select_tool(Config.TOOL_GENERATOR)
+	var placed_generator: Dictionary = state.try_apply_tool(generator_cell)
+	if not _expect(bool(placed_generator["ok"]), "generator placement failed"):
+		return
+	if not _expect(state.power_capacity == Config.POWER_GENERATOR_OUTPUT, "generator capacity mismatch"):
+		return
+
+	var money_after_generator := expected_money - Config.tool_cost(Config.TOOL_GENERATOR)
+
+	state.select_tool(Config.TOOL_MINER)
 	var placed_miner: Dictionary = state.try_apply_tool(ore_cell)
 	if not _expect(bool(placed_miner["ok"]), "miner placement on ore failed"):
 		return
-	if not _expect(state.money == expected_money - Config.tool_cost(Config.TOOL_MINER), "miner cost mismatch"):
+	if not _expect(state.money == money_after_generator - Config.tool_cost(Config.TOOL_MINER), "miner cost mismatch"):
+		return
+	if not _expect(bool(state.get_building(ore_cell).get("powered", false)), "covered miner should be powered"):
+		return
+	if not _expect(state.power_used == Config.POWER_USAGE_MINER, "miner power usage mismatch"):
 		return
 
 	var amount_before := state.get_resource_amount(ore_cell)
@@ -135,6 +151,14 @@ func _ready() -> void:
 	if not _expect(bool(placed_storage["ok"]), "storage placement failed"):
 		return
 
+	var expected_power_used := (
+		Config.POWER_USAGE_MINER
+		+ Config.POWER_USAGE_INSERTER * 3
+		+ Config.POWER_USAGE_ASSEMBLER
+	)
+	if not _expect(state.power_used == expected_power_used, "factory power usage mismatch"):
+		return
+
 	_advance(state, 2.0)
 	if not _expect(state.parts >= 1, "storage did not receive produced part"):
 		return
@@ -142,12 +166,18 @@ func _ready() -> void:
 		return
 
 	var snapshot := state.to_snapshot()
+	if not _expect(not _snapshot_persists_powered(snapshot), "snapshot should not persist raw powered"):
+		return
 	var restored = FactoryStateScript.new()
 	if not _expect(restored.load_snapshot(snapshot), "snapshot load failed"):
 		return
 	if not _expect(restored.parts == state.parts, "snapshot parts mismatch"):
 		return
 	if not _expect(restored.get_buildings().size() == state.get_buildings().size(), "snapshot building count mismatch"):
+		return
+	if not _expect(restored.power_used == state.power_used and restored.power_capacity == state.power_capacity, "snapshot power totals mismatch"):
+		return
+	if not _expect(bool(restored.get_building(ore_cell).get("powered", false)), "snapshot did not recalculate miner power"):
 		return
 
 	var save_path := "user://factoryops_smoke_save.json"
@@ -158,7 +188,23 @@ func _ready() -> void:
 		return
 	if not _expect(loaded.parts == state.parts, "disk save parts mismatch"):
 		return
+	if not _expect(loaded.power_used == state.power_used and loaded.power_capacity == state.power_capacity, "disk save power totals mismatch"):
+		return
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+
+	state.select_tool(Config.TOOL_ERASE)
+	var removed_generator: Dictionary = state.try_apply_tool(generator_cell)
+	if not _expect(bool(removed_generator["ok"]), "generator removal failed"):
+		return
+	if not _expect(state.power_capacity == 0 and state.power_used == 0, "generator removal did not clear power totals"):
+		return
+	if not _expect(not bool(state.get_building(ore_cell).get("powered", true)), "miner stayed powered after generator removal"):
+		return
+
+	var parts_before_unpowered: int = state.parts
+	_advance(state, Config.MINER_INTERVAL * 2.0)
+	if not _expect(state.parts == parts_before_unpowered, "unpowered factory kept producing after generator removal"):
+		return
 
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
@@ -185,6 +231,11 @@ func _first_ore_cell_with_right_room(state, right_room: int) -> Vector2i:
 			return cell
 	return Vector2i(-1, -1)
 
+func _generator_cell_for(ore_cell: Vector2i) -> Vector2i:
+	if ore_cell.y + 1 < Config.GRID_ROWS:
+		return ore_cell + Vector2i.DOWN
+	return ore_cell + Vector2i.UP
+
 func _advance(state, seconds: float) -> void:
 	var remaining := seconds
 	while remaining > 0.0:
@@ -196,5 +247,11 @@ func _has_item_at(state, cell: Vector2i) -> bool:
 	for item in state.get_items():
 		var item_cell: Vector2i = item.get("cell", Vector2i(-1, -1))
 		if item_cell == cell:
+			return true
+	return false
+
+func _snapshot_persists_powered(snapshot: Dictionary) -> bool:
+	for raw_building in snapshot.get("buildings", []):
+		if typeof(raw_building) == TYPE_DICTIONARY and Dictionary(raw_building).has("powered"):
 			return true
 	return false

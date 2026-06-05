@@ -17,6 +17,8 @@ var simulation_time := 0.0
 var parts := 0
 var ore_stored := 0
 var produced_times := []
+var power_used := 0
+var power_capacity := 0
 
 func _init() -> void:
 	rng.randomize()
@@ -36,7 +38,7 @@ func rotate_selection() -> void:
 func tick(delta: float) -> void:
 	var dt: float = minf(delta, Config.SIMULATION_DT_CLAMP)
 	simulation_time += dt
-	var changed_this_tick := false
+	var changed_this_tick := recalculate_power()
 
 	for key in buildings.keys():
 		var cell: Vector2i = key
@@ -88,6 +90,44 @@ func get_building(cell: Vector2i) -> Dictionary:
 	if not buildings.has(cell):
 		return {}
 	return buildings[cell]
+
+func recalculate_power() -> bool:
+	var generators: Array[Dictionary] = []
+	for building in buildings.values():
+		var building_type := String(building.get("type", ""))
+		if building_type == Config.TOOL_GENERATOR:
+			generators.append(building)
+
+	var previous_used := power_used
+	var previous_capacity := power_capacity
+	var next_capacity := generators.size() * Config.POWER_GENERATOR_OUTPUT
+	var remaining := next_capacity
+	var next_used := 0
+	var changed_power_state := false
+
+	for key in buildings.keys():
+		var cell: Vector2i = key
+		var building: Dictionary = buildings[cell]
+		var building_type := String(building.get("type", ""))
+		var previous_powered := bool(building.get("powered", true))
+		var need := Config.power_need(building_type)
+		var next_powered := true
+
+		if need > 0:
+			next_powered = _is_covered_by_generator(cell, generators) and remaining >= need
+			if next_powered:
+				remaining -= need
+				next_used += need
+
+		building["powered"] = next_powered
+		buildings[cell] = building
+		if previous_powered != next_powered:
+			changed_power_state = true
+
+	power_capacity = next_capacity
+	power_used = next_used
+	changed_power_state = changed_power_state or previous_used != power_used or previous_capacity != power_capacity
+	return changed_power_state
 
 func save_to_disk(path := Config.SAVE_PATH) -> bool:
 	var file := FileAccess.open(path, FileAccess.WRITE)
@@ -159,6 +199,7 @@ func load_snapshot(snapshot: Dictionary) -> bool:
 			resources[cell] = resource
 
 	items = _deserialize_items(snapshot.get("items", []))
+	recalculate_power()
 	_update_rate_window()
 	emit_signal("changed")
 	return true
@@ -194,6 +235,7 @@ func _try_place(cell: Vector2i) -> Dictionary:
 
 	money -= cost
 	buildings[cell] = building
+	recalculate_power()
 	emit_signal("changed")
 	return _result(true, "placed", "Construido.", cell, -cost)
 
@@ -205,6 +247,7 @@ func _try_remove(cell: Vector2i) -> Dictionary:
 	var refund := Config.tool_refund(String(building.get("type", "")))
 	buildings.erase(cell)
 	money += refund
+	recalculate_power()
 	emit_signal("changed")
 	return _result(true, "removed", "Removido.", cell, refund)
 
@@ -450,6 +493,15 @@ func _nearby_building_count(cell: Vector2i, building_type: String, radius: int) 
 
 	return count
 
+func _is_covered_by_generator(cell: Vector2i, generators: Array[Dictionary]) -> bool:
+	for generator in generators:
+		var generator_cell: Vector2i = generator.get("cell", Vector2i(-1, -1))
+		var distance := absi(generator_cell.x - cell.x) + absi(generator_cell.y - cell.y)
+		if distance <= Config.POWER_GENERATOR_RADIUS:
+			return true
+
+	return false
+
 func _store_part(_part: Dictionary) -> void:
 	parts += 1
 	produced_times.append(simulation_time)
@@ -475,7 +527,6 @@ func _serialize_building(building: Dictionary) -> Dictionary:
 		"output_queue": _serialize_items(building.get("output_queue", [])),
 		"held": _serialize_optional_item(building.get("held", {})),
 		"progress": float(building.get("progress", 0.0)),
-		"powered": bool(building.get("powered", true)),
 	}
 
 func _deserialize_building(raw_building: Variant) -> Dictionary:
@@ -500,7 +551,7 @@ func _deserialize_building(raw_building: Variant) -> Dictionary:
 		"output_queue": output_queue,
 		"held": held,
 		"progress": clampf(float(source.get("progress", 0.0)), 0.0, 1.0),
-		"powered": bool(source.get("powered", true)),
+		"powered": true,
 	}
 
 func _serialize_resources() -> Array:
