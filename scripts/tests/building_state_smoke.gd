@@ -137,6 +137,8 @@ func _ready() -> void:
 		return
 	if not _expect(float(first_part.get("quality", 0.0)) >= Config.MIN_QUALITY, "part quality below minimum"):
 		return
+	var first_part_quality := float(first_part.get("quality", Config.DEFAULT_ITEM_QUALITY))
+	var first_part_premium := bool(first_part.get("premium", false))
 
 	var output_inserter_cell := assembler_cell + Config.direction_offset(0)
 	var storage_cell := output_inserter_cell + Config.direction_offset(0)
@@ -164,6 +166,19 @@ func _ready() -> void:
 		return
 	if not _expect(state.get_parts_per_minute() >= 1, "parts per minute rate did not update"):
 		return
+	if not _expect(state.get_shop_stock() == state.parts, "warehouse did not feed shop stock"):
+		return
+	if not _expect(_shop_has_part(state, first_part_quality, first_part_premium), "shop stock did not preserve part quality"):
+		return
+	if not _expect(state.get_shop_base_stock() + state.get_shop_premium_stock() == state.get_shop_stock(), "shop base/premium split mismatch"):
+		return
+	var shop_report: Dictionary = state.get_shop_report()
+	if not _expect(int(shop_report["stock"]) == state.get_shop_stock(), "shop report stock mismatch"):
+		return
+	if not _expect(float(shop_report["average_quality"]) >= Config.MIN_QUALITY, "shop average quality below minimum"):
+		return
+	if not _expect(state.set_mode(Config.MODE_SHOP) and state.mode == Config.MODE_SHOP, "shop mode switch failed"):
+		return
 
 	var snapshot := state.to_snapshot()
 	if not _expect(not _snapshot_persists_powered(snapshot), "snapshot should not persist raw powered"):
@@ -179,6 +194,21 @@ func _ready() -> void:
 		return
 	if not _expect(bool(restored.get_building(ore_cell).get("powered", false)), "snapshot did not recalculate miner power"):
 		return
+	if not _expect(restored.mode == Config.MODE_SHOP, "snapshot mode mismatch"):
+		return
+	if not _expect(restored.get_shop_stock() == state.get_shop_stock(), "snapshot shop stock mismatch"):
+		return
+	if not _expect(_shop_has_part(restored, first_part_quality, first_part_premium), "snapshot lost shop part quality"):
+		return
+	var legacy_snapshot: Dictionary = snapshot.duplicate(true)
+	legacy_snapshot.erase("shop")
+	var legacy_restored = FactoryStateScript.new()
+	if not _expect(legacy_restored.load_snapshot(legacy_snapshot), "legacy snapshot load failed"):
+		return
+	if not _expect(legacy_restored.get_shop_stock() == legacy_restored.parts, "legacy parts did not migrate to shop stock"):
+		return
+	if not _expect(legacy_restored.get_shop_base_stock() == legacy_restored.parts, "legacy migrated stock should be base stock"):
+		return
 
 	var save_path := "user://factoryops_smoke_save.json"
 	if not _expect(state.save_to_disk(save_path), "save_to_disk failed"):
@@ -189,6 +219,12 @@ func _ready() -> void:
 	if not _expect(loaded.parts == state.parts, "disk save parts mismatch"):
 		return
 	if not _expect(loaded.power_used == state.power_used and loaded.power_capacity == state.power_capacity, "disk save power totals mismatch"):
+		return
+	if not _expect(loaded.mode == Config.MODE_SHOP, "disk save mode mismatch"):
+		return
+	if not _expect(loaded.get_shop_stock() == state.get_shop_stock(), "disk save shop stock mismatch"):
+		return
+	if not _expect(_shop_has_part(loaded, first_part_quality, first_part_premium), "disk save lost shop part quality"):
 		return
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 
@@ -253,5 +289,14 @@ func _has_item_at(state, cell: Vector2i) -> bool:
 func _snapshot_persists_powered(snapshot: Dictionary) -> bool:
 	for raw_building in snapshot.get("buildings", []):
 		if typeof(raw_building) == TYPE_DICTIONARY and Dictionary(raw_building).has("powered"):
+			return true
+	return false
+
+func _shop_has_part(state, quality: float, premium: bool) -> bool:
+	for item in state.get_shop_inventory():
+		var part: Dictionary = item
+		if bool(part.get("premium", false)) != premium:
+			continue
+		if absf(float(part.get("quality", 0.0)) - quality) <= 0.001:
 			return true
 	return false

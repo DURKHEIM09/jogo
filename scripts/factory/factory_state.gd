@@ -19,6 +19,20 @@ var ore_stored := 0
 var produced_times := []
 var power_used := 0
 var power_capacity := 0
+var mode := Config.MODE_FACTORY
+var shop_inventory := []
+var shop_price := Config.SHOP_INITIAL_PRICE
+var shop_reputation := Config.SHOP_INITIAL_REPUTATION
+var shop_customers_served := 0
+var shop_customers_lost := 0
+var shop_sales := 0
+var shop_revenue := 0
+var shop_quality_sum := 0.0
+var shop_quality_count := 0
+var shop_best_quality := Config.DEFAULT_ITEM_QUALITY
+var shop_premium_produced := 0
+var shop_consumed_base := 0
+var shop_consumed_premium := 0
 
 func _init() -> void:
 	rng.randomize()
@@ -91,6 +105,83 @@ func get_building(cell: Vector2i) -> Dictionary:
 		return {}
 	return buildings[cell]
 
+func set_mode(next_mode: String) -> bool:
+	if not Config.is_known_mode(next_mode):
+		return false
+	if mode == next_mode:
+		return true
+	mode = next_mode
+	emit_signal("changed")
+	return true
+
+func toggle_mode() -> void:
+	if mode == Config.MODE_FACTORY:
+		set_mode(Config.MODE_SHOP)
+	else:
+		set_mode(Config.MODE_FACTORY)
+
+func get_shop_inventory() -> Array:
+	return shop_inventory.duplicate(true)
+
+func get_shop_stock() -> int:
+	return shop_inventory.size()
+
+func get_shop_base_stock() -> int:
+	var count := 0
+	for item in shop_inventory:
+		var part: Dictionary = item
+		if not bool(part.get("premium", false)):
+			count += 1
+	return count
+
+func get_shop_premium_stock() -> int:
+	var count := 0
+	for item in shop_inventory:
+		var part: Dictionary = item
+		if bool(part.get("premium", false)):
+			count += 1
+	return count
+
+func get_shop_average_quality() -> float:
+	if shop_quality_count <= 0:
+		return Config.DEFAULT_ITEM_QUALITY
+	return shop_quality_sum / float(shop_quality_count)
+
+func get_shop_demand() -> float:
+	var price_pressure := clampf(
+		Config.SHOP_DEMAND_PRICE_ANCHOR / maxf(1.0, float(shop_price)),
+		Config.SHOP_DEMAND_PRICE_MIN,
+		Config.SHOP_DEMAND_PRICE_MAX
+	)
+	var reputation_boost := clampf(
+		shop_reputation / Config.SHOP_INITIAL_REPUTATION,
+		Config.SHOP_DEMAND_REPUTATION_MIN,
+		Config.SHOP_DEMAND_REPUTATION_MAX
+	)
+	var stock_boost := 1.0 if get_shop_stock() > 0 else Config.SHOP_EMPTY_STOCK_DEMAND_FACTOR
+	return price_pressure * reputation_boost * stock_boost
+
+func get_shop_report() -> Dictionary:
+	var demand := get_shop_demand()
+	return {
+		"stock": get_shop_stock(),
+		"base_stock": get_shop_base_stock(),
+		"premium_stock": get_shop_premium_stock(),
+		"price": shop_price,
+		"reputation": shop_reputation,
+		"demand": demand,
+		"demand_label": _shop_demand_label(demand),
+		"customers_served": shop_customers_served,
+		"customers_lost": shop_customers_lost,
+		"sales": shop_sales,
+		"revenue": shop_revenue,
+		"gross_profit": shop_revenue,
+		"average_quality": get_shop_average_quality(),
+		"best_quality": shop_best_quality,
+		"premium_produced": shop_premium_produced,
+		"bottleneck": _get_shop_bottleneck(demand),
+	}
+
 func recalculate_power() -> bool:
 	var generators: Array[Dictionary] = []
 	for building in buildings.values():
@@ -158,6 +249,7 @@ func to_snapshot() -> Dictionary:
 	return {
 		"version": Config.SAVE_VERSION,
 		"money": money,
+		"mode": mode,
 		"selected_tool": selected_tool,
 		"selected_dir": selected_dir,
 		"simulation_time": simulation_time,
@@ -167,10 +259,14 @@ func to_snapshot() -> Dictionary:
 		"buildings": _serialize_buildings(),
 		"resources": _serialize_resources(),
 		"items": _serialize_items(items),
+		"shop": _serialize_shop(),
 	}
 
 func load_snapshot(snapshot: Dictionary) -> bool:
 	money = int(snapshot.get("money", Config.INITIAL_MONEY))
+	mode = String(snapshot.get("mode", Config.MODE_FACTORY))
+	if not Config.is_known_mode(mode):
+		mode = Config.MODE_FACTORY
 	selected_tool = String(snapshot.get("selected_tool", Config.TOOL_BELT))
 	if not Config.is_known_tool(selected_tool):
 		selected_tool = Config.TOOL_BELT
@@ -179,6 +275,10 @@ func load_snapshot(snapshot: Dictionary) -> bool:
 	parts = max(0, int(snapshot.get("parts", 0)))
 	ore_stored = max(0, int(snapshot.get("ore_stored", 0)))
 	produced_times = _deserialize_float_array(snapshot.get("produced_times", []))
+	var has_shop_snapshot := snapshot.has("shop")
+	_load_shop_snapshot(snapshot.get("shop", {}))
+	if not has_shop_snapshot and parts > 0:
+		_seed_shop_from_legacy_parts(parts)
 
 	buildings.clear()
 	for raw_building in _as_array(snapshot.get("buildings", [])):
@@ -502,9 +602,46 @@ func _is_covered_by_generator(cell: Vector2i, generators: Array[Dictionary]) -> 
 
 	return false
 
-func _store_part(_part: Dictionary) -> void:
+func _store_part(part: Dictionary) -> void:
+	var stored_part := _make_stored_part(part)
+	shop_inventory.append(stored_part)
+	shop_quality_sum += float(stored_part.get("quality", Config.DEFAULT_ITEM_QUALITY))
+	shop_quality_count += 1
+	shop_best_quality = maxf(shop_best_quality, float(stored_part.get("quality", Config.DEFAULT_ITEM_QUALITY)))
+	if bool(stored_part.get("premium", false)):
+		shop_premium_produced += 1
+
 	parts += 1
 	produced_times.append(simulation_time)
+
+func _make_stored_part(raw_part: Dictionary) -> Dictionary:
+	var part := _normalize_item(raw_part)
+	var quality := clampf(float(part.get("quality", Config.DEFAULT_ITEM_QUALITY)), Config.MIN_QUALITY, Config.MAX_QUALITY)
+	part["type"] = Config.ITEM_PART
+	part["tier"] = max(1, int(part.get("tier", Config.DEFAULT_ITEM_TIER)))
+	part["quality"] = quality
+	part["premium"] = quality >= Config.PREMIUM_THRESHOLD
+	part["cell"] = Vector2i(-1, -1)
+	part["dir"] = 0
+	part["progress"] = 0.0
+	part["age"] = 0.0
+	return part
+
+func _shop_demand_label(demand: float) -> String:
+	if demand >= 1.12:
+		return "alta"
+	if demand <= 0.72:
+		return "baixa"
+	return "ok"
+
+func _get_shop_bottleneck(demand: float) -> String:
+	if get_shop_stock() <= 0:
+		return "estoque"
+	if demand <= 0.72:
+		return "demanda"
+	if shop_price >= 20 and shop_customers_lost > max(1, shop_customers_served):
+		return "preco"
+	return "ok"
 
 func _update_rate_window() -> void:
 	var cutoff := simulation_time - Config.RATE_WINDOW_SECONDS
@@ -515,6 +652,105 @@ func _serialize_buildings() -> Array:
 	for building in buildings.values():
 		result.append(_serialize_building(building))
 	return result
+
+func _serialize_shop() -> Dictionary:
+	return {
+		"stock": get_shop_stock(),
+		"price": shop_price,
+		"reputation": shop_reputation,
+		"customers_served": shop_customers_served,
+		"customers_lost": shop_customers_lost,
+		"sales": shop_sales,
+		"revenue": shop_revenue,
+		"base_stock": get_shop_base_stock(),
+		"premium_stock": get_shop_premium_stock(),
+		"quality_sum": shop_quality_sum,
+		"quality_count": shop_quality_count,
+		"best_quality": shop_best_quality,
+		"premium_produced": shop_premium_produced,
+		"consumed_base": shop_consumed_base,
+		"consumed_premium": shop_consumed_premium,
+		"inventory": _serialize_items(shop_inventory),
+	}
+
+func _load_shop_snapshot(raw_shop: Variant) -> void:
+	_reset_shop_state()
+	if typeof(raw_shop) != TYPE_DICTIONARY:
+		return
+
+	var source: Dictionary = raw_shop
+	shop_price = max(Config.SHOP_MIN_PRICE, min(Config.SHOP_MAX_PRICE, int(source.get("price", Config.SHOP_INITIAL_PRICE))))
+	shop_reputation = clampf(float(source.get("reputation", Config.SHOP_INITIAL_REPUTATION)), 0.0, 100.0)
+	shop_customers_served = max(0, int(source.get("customers_served", source.get("customersServed", 0))))
+	shop_customers_lost = max(0, int(source.get("customers_lost", source.get("customersLost", 0))))
+	shop_sales = max(0, int(source.get("sales", 0)))
+	shop_revenue = max(0, int(source.get("revenue", 0)))
+	shop_consumed_base = max(0, int(source.get("consumed_base", source.get("consumedBase", 0))))
+	shop_consumed_premium = max(0, int(source.get("consumed_premium", source.get("consumedPremium", 0))))
+	shop_inventory = _deserialize_shop_inventory(source)
+	shop_quality_sum = maxf(0.0, float(source.get("quality_sum", source.get("qualitySum", _sum_shop_inventory_quality()))))
+	shop_quality_count = max(0, int(source.get("quality_count", source.get("qualityCount", shop_inventory.size()))))
+	shop_best_quality = maxf(Config.DEFAULT_ITEM_QUALITY, float(source.get("best_quality", source.get("bestQuality", _best_shop_inventory_quality()))))
+	shop_premium_produced = max(0, int(source.get("premium_produced", source.get("premiumProduced", get_shop_premium_stock()))))
+
+func _reset_shop_state() -> void:
+	shop_inventory = []
+	shop_price = Config.SHOP_INITIAL_PRICE
+	shop_reputation = Config.SHOP_INITIAL_REPUTATION
+	shop_customers_served = 0
+	shop_customers_lost = 0
+	shop_sales = 0
+	shop_revenue = 0
+	shop_quality_sum = 0.0
+	shop_quality_count = 0
+	shop_best_quality = Config.DEFAULT_ITEM_QUALITY
+	shop_premium_produced = 0
+	shop_consumed_base = 0
+	shop_consumed_premium = 0
+
+func _seed_shop_from_legacy_parts(count: int) -> void:
+	for _index in range(max(0, count)):
+		var part := _make_stored_part(_make_item(Config.ITEM_PART, Config.DEFAULT_ITEM_QUALITY))
+		shop_inventory.append(part)
+		shop_quality_sum += float(part.get("quality", Config.DEFAULT_ITEM_QUALITY))
+		shop_quality_count += 1
+
+func _deserialize_shop_inventory(source: Dictionary) -> Array:
+	var inventory: Array = []
+	for item in _deserialize_items(source.get("inventory", [])):
+		var part: Dictionary = item
+		if String(part.get("type", "")) == Config.ITEM_PART:
+			inventory.append(_make_stored_part(part))
+
+	if not inventory.is_empty():
+		return inventory
+
+	var stock: int = max(0, int(source.get("stock", 0)))
+	var premium_count: int = max(0, int(source.get("premium_stock", source.get("premiumStock", 0))))
+	var base_count: int = max(0, int(source.get("base_stock", source.get("baseStock", max(0, stock - premium_count)))))
+	premium_count = min(premium_count, stock)
+	base_count = min(base_count, max(0, stock - premium_count))
+
+	for _index in range(base_count):
+		inventory.append(_make_stored_part(_make_item(Config.ITEM_PART, Config.DEFAULT_ITEM_QUALITY)))
+	for _index in range(premium_count):
+		inventory.append(_make_stored_part(_make_item(Config.ITEM_PART, Config.PREMIUM_THRESHOLD)))
+
+	return inventory
+
+func _sum_shop_inventory_quality() -> float:
+	var total := 0.0
+	for item in shop_inventory:
+		var part: Dictionary = item
+		total += float(part.get("quality", Config.DEFAULT_ITEM_QUALITY))
+	return total
+
+func _best_shop_inventory_quality() -> float:
+	var best := Config.DEFAULT_ITEM_QUALITY
+	for item in shop_inventory:
+		var part: Dictionary = item
+		best = maxf(best, float(part.get("quality", Config.DEFAULT_ITEM_QUALITY)))
+	return best
 
 func _serialize_building(building: Dictionary) -> Dictionary:
 	return {

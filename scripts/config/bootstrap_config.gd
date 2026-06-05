@@ -9,6 +9,8 @@ const GRID_COLUMNS := 24
 const GRID_ROWS := 14
 const CELL_SIZE := 32
 const GRID_ORIGIN := Vector2(80, 96)
+const SHOP_ORIGIN := GRID_ORIGIN
+const SHOP_SIZE := Vector2(GRID_COLUMNS * CELL_SIZE, GRID_ROWS * CELL_SIZE)
 
 const COLOR_BACKGROUND := Color(0.047, 0.059, 0.075, 1.0)
 const COLOR_BACKGROUND_PANEL := Color(0.066, 0.086, 0.105, 1.0)
@@ -27,6 +29,10 @@ const COLOR_ORE_DOT := Color(0.780, 0.478, 0.243, 1.0)
 const COLOR_ORE_GLOW := Color(0.957, 0.714, 0.302, 0.38)
 const COLOR_UNPOWERED := Color(0.984, 0.251, 0.337, 1.0)
 const COLOR_UNPOWERED_FILL := Color(0.984, 0.251, 0.337, 0.22)
+const COLOR_SHOP_FLOOR := Color(0.095, 0.137, 0.188, 1.0)
+const COLOR_SHOP_WALL := Color(0.149, 0.208, 0.271, 1.0)
+const COLOR_SHOP_SHELF := Color(0.525, 0.361, 0.247, 1.0)
+const COLOR_SHOP_COUNTER := Color(0.184, 0.451, 0.420, 1.0)
 
 const INITIAL_MONEY := 320
 const BUILDING_REFUND_RATE := 0.45
@@ -63,9 +69,22 @@ const MIN_QUALITY := 0.65
 const MAX_QUALITY := 2.4
 const DEFAULT_ITEM_TIER := 1
 const DEFAULT_ITEM_QUALITY := 1.0
+const SHOP_INITIAL_PRICE := 12
+const SHOP_MIN_PRICE := 4
+const SHOP_MAX_PRICE := 40
+const SHOP_INITIAL_REPUTATION := 50.0
+const SHOP_DEMAND_PRICE_ANCHOR := 18.0
+const SHOP_DEMAND_PRICE_MIN := 0.35
+const SHOP_DEMAND_PRICE_MAX := 1.65
+const SHOP_DEMAND_REPUTATION_MIN := 0.45
+const SHOP_DEMAND_REPUTATION_MAX := 1.7
+const SHOP_EMPTY_STOCK_DEMAND_FACTOR := 0.35
 
 const ITEM_ORE := "ore"
 const ITEM_PART := "part"
+
+const MODE_FACTORY := "factory"
+const MODE_SHOP := "shop"
 
 const TOOL_BELT := "belt"
 const TOOL_INSERTER := "inserter"
@@ -85,6 +104,9 @@ static func is_known_tool(tool: String) -> bool:
 		or tool == TOOL_GENERATOR
 		or tool == TOOL_ERASE
 	)
+
+static func is_known_mode(next_mode: String) -> bool:
+	return next_mode == MODE_FACTORY or next_mode == MODE_SHOP
 
 static func is_directional_tool(tool: String) -> bool:
 	return (

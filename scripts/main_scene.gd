@@ -3,11 +3,13 @@ extends Node2D
 
 const Config := preload("res://scripts/config/bootstrap_config.gd")
 const FactoryStateScript := preload("res://scripts/factory/factory_state.gd")
+const ShopViewScript := preload("res://scripts/shop_view.gd")
 
 @onready var camera: Camera2D = $Camera2D
 @onready var grid_view: Node2D = $GridView
 
 var factory_state = null
+var shop_view: Node2D
 var hud_label: Label
 var last_action := "Pronto."
 
@@ -19,8 +21,14 @@ func _ready() -> void:
 	grid_view.position = Config.GRID_ORIGIN
 	grid_view.call("set_factory_state", factory_state)
 	grid_view.connect("cell_clicked", Callable(self, "_on_grid_cell_clicked"))
+	shop_view = ShopViewScript.new()
+	shop_view.name = "ShopView"
+	shop_view.position = Config.SHOP_ORIGIN
+	shop_view.call("set_factory_state", factory_state)
+	add_child(shop_view)
 	factory_state.connect("changed", Callable(self, "_on_factory_state_changed"))
 	_create_hud()
+	_sync_mode_view()
 	_update_hud()
 
 	if OS.is_debug_build():
@@ -48,9 +56,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key_event.keycode == KEY_F9:
 		var loaded: bool = factory_state.load_from_disk()
 		last_action = "Jogo carregado." if loaded else "Save nao encontrado."
+		_sync_mode_view()
 		_update_hud()
 		grid_view.queue_redraw()
+		shop_view.queue_redraw()
 		print("FACTORYOPS_LOAD:%s" % ["ok" if loaded else "miss"])
+		return
+
+	if key_event.keycode == KEY_TAB:
+		factory_state.toggle_mode()
+		last_action = "Loja aberta." if factory_state.mode == Config.MODE_SHOP else "Fabrica aberta."
+		_sync_mode_view()
+		_update_hud()
+		queue_redraw()
 		return
 
 	var next_tool := _tool_from_key(key_event.keycode)
@@ -76,7 +94,10 @@ func _on_grid_cell_clicked(cell: Vector2i) -> void:
 	)
 
 func _on_factory_state_changed() -> void:
+	_sync_mode_view()
 	grid_view.queue_redraw()
+	shop_view.queue_redraw()
+	queue_redraw()
 	_update_hud()
 
 func _create_hud() -> void:
@@ -91,6 +112,8 @@ func _create_hud() -> void:
 	hud_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.75))
 	hud_label.add_theme_constant_override("shadow_offset_x", 1)
 	hud_label.add_theme_constant_override("shadow_offset_y", 1)
+	hud_label.size = Vector2(1232.0, 80.0)
+	hud_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hud_layer.add_child(hud_label)
 
 func _update_hud() -> void:
@@ -98,9 +121,29 @@ func _update_hud() -> void:
 		return
 
 	var selected_tool := String(factory_state.selected_tool)
-	hud_label.text = "Creditos: %d   Pecas: %d   Itens: %d   Energia: %d/%d   Taxa: %d/min   Ferramenta: %s $%d   %s" % [
+	if factory_state.mode == Config.MODE_SHOP:
+		var report: Dictionary = factory_state.get_shop_report()
+		hud_label.text = "Modo: Loja   Creditos: %d   Estoque: %d   Base/Prem: %d/%d   Qualidade: %.2f   Melhor: %.2f   Preco: $%d\nDemanda: %s   Reputacao: %d   Receita: %d   Vendas: %d   Gargalo: %s   %s" % [
+			int(factory_state.money),
+			int(report["stock"]),
+			int(report["base_stock"]),
+			int(report["premium_stock"]),
+			float(report["average_quality"]),
+			float(report["best_quality"]),
+			int(report["price"]),
+			String(report["demand_label"]),
+			int(round(float(report["reputation"]))),
+			int(report["revenue"]),
+			int(report["sales"]),
+			String(report["bottleneck"]),
+			last_action,
+		]
+		return
+
+	hud_label.text = "Modo: Fabrica   Creditos: %d   Pecas: %d   Loja: %d   Itens: %d   Energia: %d/%d   Taxa: %d/min   Ferramenta: %s $%d   %s" % [
 		int(factory_state.money),
 		int(factory_state.parts),
+		factory_state.get_shop_stock(),
 		factory_state.get_items().size(),
 		int(factory_state.power_used),
 		int(factory_state.power_capacity),
@@ -109,6 +152,12 @@ func _update_hud() -> void:
 		Config.tool_cost(selected_tool),
 		last_action,
 	]
+
+func _sync_mode_view() -> void:
+	var show_shop: bool = factory_state != null and factory_state.mode == Config.MODE_SHOP
+	grid_view.visible = not show_shop
+	if shop_view != null:
+		shop_view.visible = show_shop
 
 func _tool_from_key(keycode: Key) -> String:
 	match keycode:
