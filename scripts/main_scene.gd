@@ -71,6 +71,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		queue_redraw()
 		return
 
+	if factory_state.mode == Config.MODE_SHOP and (key_event.keycode == KEY_LEFT or key_event.keycode == KEY_RIGHT):
+		var delta: int = -Config.SHOP_PRICE_STEP if key_event.keycode == KEY_LEFT else Config.SHOP_PRICE_STEP
+		factory_state.adjust_shop_price(delta)
+		last_action = "Preco: $%d." % int(factory_state.shop_price)
+		_update_hud()
+		return
+
 	var next_tool := _tool_from_key(key_event.keycode)
 	if next_tool != "":
 		factory_state.select_tool(next_tool)

@@ -153,6 +153,17 @@ func get_shop_average_quality() -> float:
 		return Config.DEFAULT_ITEM_QUALITY
 	return shop_quality_sum / float(shop_quality_count)
 
+func set_shop_price(next_price: int) -> bool:
+	var clamped_price: int = max(Config.SHOP_MIN_PRICE, min(Config.SHOP_MAX_PRICE, next_price))
+	if shop_price == clamped_price:
+		return false
+	shop_price = clamped_price
+	emit_signal("changed")
+	return true
+
+func adjust_shop_price(delta: int) -> bool:
+	return set_shop_price(shop_price + delta)
+
 func get_shop_demand() -> float:
 	var price_pressure := clampf(
 		Config.SHOP_DEMAND_PRICE_ANCHOR / maxf(1.0, float(shop_price)),

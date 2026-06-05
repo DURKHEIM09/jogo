@@ -286,6 +286,32 @@ func _ready() -> void:
 	if not _expect(expensive_shop.shop_reputation < expensive_reputation_before, "overprice did not reduce reputation"):
 		return
 
+	var demand_shop = FactoryStateScript.new()
+	demand_shop.shop_spawn_timer = 999.0
+	var empty_demand: float = demand_shop.get_shop_demand()
+	demand_shop._store_part(_test_part(Config.DEFAULT_ITEM_QUALITY))
+	var stocked_demand: float = demand_shop.get_shop_demand()
+	if not _expect(stocked_demand > empty_demand, "demand did not react to available stock"):
+		return
+	if not _expect(demand_shop.set_shop_price(Config.SHOP_MAX_PRICE + 10), "shop price did not clamp to max"):
+		return
+	if not _expect(demand_shop.shop_price == Config.SHOP_MAX_PRICE, "shop max price clamp mismatch"):
+		return
+	var high_price_demand: float = demand_shop.get_shop_demand()
+	if not _expect(demand_shop.adjust_shop_price(-1000), "shop price did not adjust down"):
+		return
+	if not _expect(demand_shop.shop_price == Config.SHOP_MIN_PRICE, "shop min price clamp mismatch"):
+		return
+	var low_price_demand: float = demand_shop.get_shop_demand()
+	if not _expect(low_price_demand > high_price_demand, "demand did not react to price"):
+		return
+	demand_shop.shop_reputation = 10.0
+	var low_reputation_demand: float = demand_shop.get_shop_demand()
+	demand_shop.shop_reputation = 90.0
+	var high_reputation_demand: float = demand_shop.get_shop_demand()
+	if not _expect(high_reputation_demand > low_reputation_demand, "demand did not react to reputation"):
+		return
+
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
 
