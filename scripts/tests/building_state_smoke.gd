@@ -8,6 +8,19 @@ func _ready() -> void:
 	state.shop_spawn_timer = 999.0
 	if not _expect(state.money == Config.INITIAL_MONEY, "initial money mismatch"):
 		return
+	if not _expect(Config.production_cost(Config.ITEM_ORE) == 1, "ore production cost mismatch"):
+		return
+	if not _expect(Config.production_cost(Config.ITEM_PART) == 4, "part production cost mismatch"):
+		return
+	if not _expect(state.is_market_bid_factor_safe(), "market bid/ask factors are unsafe"):
+		return
+	var initial_market: Dictionary = state.get_market_report()
+	var initial_ore_quote: Dictionary = initial_market["ore"]
+	var initial_part_quote: Dictionary = initial_market["part"]
+	if not _expect(int(initial_ore_quote["bid"]) == 1 and int(initial_ore_quote["ask"]) == 2, "ore market quote mismatch"):
+		return
+	if not _expect(int(initial_part_quote["bid"]) == 2 and int(initial_part_quote["ask"]) == 6, "part market quote mismatch"):
+		return
 
 	var cell := Vector2i(2, 3)
 	var placed: Dictionary = state.try_apply_tool(cell)
@@ -178,11 +191,19 @@ func _ready() -> void:
 		return
 	if not _expect(float(shop_report["average_quality"]) >= Config.MIN_QUALITY, "shop average quality below minimum"):
 		return
+	var market_report: Dictionary = state.get_market_report()
+	var market_part_quote: Dictionary = market_report["part"]
+	if not _expect(int(market_part_quote["cost"]) == Config.production_cost(Config.ITEM_PART), "market report part cost mismatch"):
+		return
+	if not _expect(int(market_report["premium_stock"]) == state.get_shop_premium_stock(), "market premium signal mismatch"):
+		return
 	if not _expect(state.set_mode(Config.MODE_SHOP) and state.mode == Config.MODE_SHOP, "shop mode switch failed"):
 		return
 
 	var snapshot := state.to_snapshot()
 	if not _expect(not _snapshot_persists_powered(snapshot), "snapshot should not persist raw powered"):
+		return
+	if not _expect(snapshot.has("market"), "snapshot missing market"):
 		return
 	var restored = FactoryStateScript.new()
 	if not _expect(restored.load_snapshot(snapshot), "snapshot load failed"):
@@ -200,6 +221,10 @@ func _ready() -> void:
 	if not _expect(restored.get_shop_stock() == state.get_shop_stock(), "snapshot shop stock mismatch"):
 		return
 	if not _expect(_shop_has_part(restored, first_part_quality, first_part_premium), "snapshot lost shop part quality"):
+		return
+	var restored_market: Dictionary = restored.get_market_report()
+	var restored_part_quote: Dictionary = restored_market["part"]
+	if not _expect(int(restored_part_quote["bid"]) == int(market_part_quote["bid"]), "snapshot market quote mismatch"):
 		return
 	var legacy_snapshot: Dictionary = snapshot.duplicate(true)
 	legacy_snapshot.erase("shop")
@@ -226,6 +251,10 @@ func _ready() -> void:
 	if not _expect(loaded.get_shop_stock() == state.get_shop_stock(), "disk save shop stock mismatch"):
 		return
 	if not _expect(_shop_has_part(loaded, first_part_quality, first_part_premium), "disk save lost shop part quality"):
+		return
+	var loaded_market: Dictionary = loaded.get_market_report()
+	var loaded_part_quote: Dictionary = loaded_market["part"]
+	if not _expect(int(loaded_part_quote["ask"]) == int(market_part_quote["ask"]), "disk save market quote mismatch"):
 		return
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 
@@ -312,6 +341,54 @@ func _ready() -> void:
 	if not _expect(high_reputation_demand > low_reputation_demand, "demand did not react to reputation"):
 		return
 
+	var ore_market = FactoryStateScript.new()
+	ore_market.shop_spawn_timer = 999.0
+	ore_market.select_tool(Config.TOOL_STORAGE)
+	var ore_storage_cell := Vector2i(5, 5)
+	var placed_ore_storage: Dictionary = ore_market.try_apply_tool(ore_storage_cell)
+	if not _expect(bool(placed_ore_storage["ok"]), "market ore storage placement failed"):
+		return
+	var ore_money_before: int = ore_market.money
+	var ore_bid: int = int(ore_market.get_market_quote(Config.ITEM_ORE)["bid"])
+	var dropped_ore: bool = ore_market._drop_from_inserter(ore_storage_cell - Config.direction_offset(0), 0, _test_ore())
+	if not _expect(dropped_ore, "ore drop into storage failed"):
+		return
+	if not _expect(ore_market.money == ore_money_before + ore_bid, "ore auto-sale did not pay market bid"):
+		return
+	if not _expect(ore_market.ore_stored == 1, "ore auto-sale did not count stored ore"):
+		return
+	var ore_market_report: Dictionary = ore_market.get_market_report()
+	if not _expect(int(ore_market_report["ore_sold"]) == 1, "ore market sale count mismatch"):
+		return
+
+	var part_market = FactoryStateScript.new()
+	part_market.shop_spawn_timer = 999.0
+	part_market._store_part(_test_part(Config.DEFAULT_ITEM_QUALITY))
+	part_market._store_part(_test_part(Config.PREMIUM_THRESHOLD))
+	var part_bid: int = int(part_market.get_market_quote(Config.ITEM_PART)["bid"])
+	var part_money_before: int = part_market.money
+	var part_revenue: int = part_market.sell_base_part_to_market(1)
+	if not _expect(part_revenue == part_bid, "base part market sale revenue mismatch"):
+		return
+	if not _expect(part_market.money == part_money_before + part_bid, "base part market sale did not add money"):
+		return
+	if not _expect(part_market.get_shop_base_stock() == 0 and part_market.get_shop_premium_stock() == 1, "premium should remain outside NPC corridor"):
+		return
+	var premium_revenue: int = part_market.sell_base_part_to_market(1)
+	if not _expect(premium_revenue == 0, "premium part should not sell to NPC corridor"):
+		return
+	if not _expect(part_market.get_shop_premium_stock() == 1, "premium stock was consumed by NPC market"):
+		return
+	var part_market_snapshot: Dictionary = part_market.to_snapshot()
+	var market_restored = FactoryStateScript.new()
+	if not _expect(market_restored.load_snapshot(part_market_snapshot), "market snapshot load failed"):
+		return
+	var market_restored_report: Dictionary = market_restored.get_market_report()
+	if not _expect(int(market_restored_report["part_sold"]) == 1, "market snapshot part sold mismatch"):
+		return
+	if not _expect(int(market_restored_report["revenue"]) == part_bid, "market snapshot revenue mismatch"):
+		return
+
 	print("FACTORYOPS_BUILDING_STATE_SMOKE_OK")
 	get_tree().quit(0)
 
@@ -368,6 +445,14 @@ func _test_part(quality: float) -> Dictionary:
 		"tier": Config.DEFAULT_ITEM_TIER,
 		"quality": quality,
 		"premium": quality >= Config.PREMIUM_THRESHOLD,
+	}
+
+func _test_ore() -> Dictionary:
+	return {
+		"type": Config.ITEM_ORE,
+		"tier": Config.DEFAULT_ITEM_TIER,
+		"quality": Config.DEFAULT_ITEM_QUALITY,
+		"premium": false,
 	}
 
 func _shop_has_part(state, quality: float, premium: bool) -> bool:

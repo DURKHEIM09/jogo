@@ -35,9 +35,15 @@ var shop_consumed_base := 0
 var shop_consumed_premium := 0
 var shop_spawn_timer := Config.SHOP_CUSTOMER_INITIAL_SPAWN
 var shop_customers := []
+var market_timer := Config.MARKET_INITIAL_TIMER
+var market_quotes := {}
+var market_ore_sold := 0
+var market_part_sold := 0
+var market_revenue := 0
 
 func _init() -> void:
 	rng.randomize()
+	_reset_market_state()
 	_generate_resources()
 
 func select_tool(tool: String) -> bool:
@@ -69,6 +75,7 @@ func tick(delta: float) -> void:
 			changed_this_tick = _update_assembler(cell, building, dt) or changed_this_tick
 
 	changed_this_tick = _update_items(dt) or changed_this_tick
+	changed_this_tick = _update_market(dt) or changed_this_tick
 	changed_this_tick = _update_shop(dt) or changed_this_tick
 
 	if changed_this_tick:
@@ -200,6 +207,37 @@ func get_shop_report() -> Dictionary:
 		"bottleneck": _get_shop_bottleneck(demand),
 	}
 
+func get_market_quote(item_type: String) -> Dictionary:
+	_ensure_market_quotes()
+	if not market_quotes.has(item_type):
+		return _create_market_quote(item_type)
+	return Dictionary(market_quotes[item_type]).duplicate(true)
+
+func get_market_report() -> Dictionary:
+	return {
+		"ore": get_market_quote(Config.ITEM_ORE),
+		"part": get_market_quote(Config.ITEM_PART),
+		"ore_sold": market_ore_sold,
+		"part_sold": market_part_sold,
+		"revenue": market_revenue,
+		"premium_stock": get_shop_premium_stock(),
+		"average_quality": get_shop_average_quality(),
+		"best_quality": shop_best_quality,
+		"bid_factor_safe": is_market_bid_factor_safe(),
+	}
+
+func is_market_bid_factor_safe() -> bool:
+	return Config.MARKET_BID_FACTOR < 1.0 and Config.MARKET_ASK_FACTOR > 1.0
+
+func sell_ore_to_market(amount := 1) -> int:
+	return _sell_to_market(Config.ITEM_ORE, max(0, amount))
+
+func sell_base_part_to_market(amount := 1) -> int:
+	var quantity := _consume_base_shop_stock(max(0, amount))
+	if quantity <= 0:
+		return 0
+	return _sell_to_market(Config.ITEM_PART, quantity)
+
 func spawn_shop_customer(budget: int = -1, notify: bool = true) -> Dictionary:
 	if shop_customers.size() >= Config.SHOP_CUSTOMER_CAPACITY:
 		return {}
@@ -308,6 +346,7 @@ func to_snapshot() -> Dictionary:
 		"resources": _serialize_resources(),
 		"items": _serialize_items(items),
 		"shop": _serialize_shop(),
+		"market": _serialize_market(),
 	}
 
 func load_snapshot(snapshot: Dictionary) -> bool:
@@ -327,6 +366,7 @@ func load_snapshot(snapshot: Dictionary) -> bool:
 	_load_shop_snapshot(snapshot.get("shop", {}))
 	if not has_shop_snapshot and parts > 0:
 		_seed_shop_from_legacy_parts(parts)
+	_load_market_snapshot(snapshot.get("market", {}))
 
 	buildings.clear()
 	for raw_building in _as_array(snapshot.get("buildings", [])):
@@ -541,6 +581,7 @@ func _drop_from_inserter(cell: Vector2i, dir: int, held_item: Dictionary) -> boo
 			_store_part(held)
 		elif item_type == Config.ITEM_ORE:
 			ore_stored += 1
+			sell_ore_to_market(1)
 		return true
 
 	return false
@@ -649,6 +690,58 @@ func _is_covered_by_generator(cell: Vector2i, generators: Array[Dictionary]) -> 
 			return true
 
 	return false
+
+func _update_market(dt: float) -> bool:
+	_ensure_market_quotes()
+	var changed_market := false
+	changed_market = _decay_market_pressure(Config.ITEM_ORE, Config.MARKET_PRESSURE_DECAY_ORE, dt) or changed_market
+	changed_market = _decay_market_pressure(Config.ITEM_PART, Config.MARKET_PRESSURE_DECAY_PART, dt) or changed_market
+
+	market_timer -= dt
+	if market_timer > 0.0:
+		return changed_market
+
+	market_timer = Config.MARKET_TIMER_MIN + rng.randf() * Config.MARKET_TIMER_VARIANCE
+	_update_market_item(Config.ITEM_ORE, Config.MARKET_ORE_DEMAND_MIN, Config.MARKET_ORE_DEMAND_MAX, Config.MARKET_ORE_VOLATILITY)
+	_update_market_item(Config.ITEM_PART, Config.MARKET_PART_DEMAND_MIN, Config.MARKET_PART_DEMAND_MAX, Config.MARKET_PART_VOLATILITY)
+	return true
+
+func _update_market_item(item_type: String, min_demand: float, max_demand: float, volatility: float) -> void:
+	var quote: Dictionary = market_quotes.get(item_type, _create_market_quote(item_type))
+	var demand := float(quote.get("demand", 1.0))
+	var random_walk := (rng.randf() - 0.48) * volatility
+	var recovery := (1.0 - demand) * 0.08
+	quote["demand"] = clampf(demand + random_walk + recovery, min_demand, max_demand)
+	market_quotes[item_type] = _refresh_market_quote(quote, item_type)
+
+func _decay_market_pressure(item_type: String, decay: float, dt: float) -> bool:
+	var quote: Dictionary = market_quotes.get(item_type, _create_market_quote(item_type))
+	var previous_pressure := float(quote.get("pressure", 0.0))
+	if previous_pressure <= 0.0:
+		return false
+	quote["pressure"] = maxf(0.0, previous_pressure - dt * decay)
+	market_quotes[item_type] = quote
+	return not is_equal_approx(previous_pressure, float(quote["pressure"]))
+
+func _sell_to_market(item_type: String, quantity: int) -> int:
+	if quantity <= 0:
+		return 0
+
+	var quote := get_market_quote(item_type)
+	var price := int(quote.get("bid", 1))
+	var revenue := price * quantity
+	money += revenue
+	market_revenue += revenue
+
+	var stored_quote: Dictionary = market_quotes.get(item_type, _create_market_quote(item_type))
+	if item_type == Config.ITEM_PART:
+		market_part_sold += quantity
+		stored_quote["pressure"] = float(stored_quote.get("pressure", 0.0)) + Config.MARKET_SELL_PRESSURE_PART * quantity
+	else:
+		market_ore_sold += quantity
+		stored_quote["pressure"] = float(stored_quote.get("pressure", 0.0)) + Config.MARKET_SELL_PRESSURE_ORE * quantity
+	market_quotes[item_type] = _refresh_market_quote(stored_quote, item_type)
+	return revenue
 
 func _update_shop(dt: float) -> bool:
 	var changed_shop := false
@@ -768,6 +861,19 @@ func _consume_shop_stock(amount: int, premium_only := false) -> int:
 
 	return consumed
 
+func _consume_base_shop_stock(amount: int) -> int:
+	var consumed := 0
+	while consumed < amount:
+		var stock_index := _find_base_shop_stock()
+		if stock_index < 0:
+			break
+
+		shop_inventory.remove_at(stock_index)
+		shop_consumed_base += 1
+		consumed += 1
+
+	return consumed
+
 func _find_consumable_shop_stock(premium_only: bool) -> int:
 	for index in range(shop_inventory.size()):
 		var base_candidate: Dictionary = shop_inventory[index]
@@ -781,6 +887,13 @@ func _find_consumable_shop_stock(premium_only: bool) -> int:
 		if bool(premium_candidate.get("premium", false)):
 			return index
 
+	return -1
+
+func _find_base_shop_stock() -> int:
+	for index in range(shop_inventory.size()):
+		var base_candidate: Dictionary = shop_inventory[index]
+		if not bool(base_candidate.get("premium", false)):
+			return index
 	return -1
 
 func _store_part(part: Dictionary) -> void:
@@ -855,6 +968,29 @@ func _serialize_shop() -> Dictionary:
 		"inventory": _serialize_items(shop_inventory),
 	}
 
+func _serialize_market() -> Dictionary:
+	_ensure_market_quotes()
+	return {
+		"timer": market_timer,
+		"ore_sold": market_ore_sold,
+		"part_sold": market_part_sold,
+		"revenue": market_revenue,
+		"ore": _serialize_market_quote(market_quotes[Config.ITEM_ORE]),
+		"part": _serialize_market_quote(market_quotes[Config.ITEM_PART]),
+	}
+
+func _serialize_market_quote(quote: Dictionary) -> Dictionary:
+	return {
+		"cost": int(quote.get("cost", 1)),
+		"bid": int(quote.get("bid", 1)),
+		"ask": int(quote.get("ask", 2)),
+		"price": int(quote.get("price", quote.get("bid", 1))),
+		"base": int(quote.get("base", quote.get("cost", 1))),
+		"demand": float(quote.get("demand", 1.0)),
+		"pressure": float(quote.get("pressure", 0.0)),
+		"last_price": int(quote.get("last_price", quote.get("lastPrice", quote.get("bid", 1)))),
+	}
+
 func _load_shop_snapshot(raw_shop: Variant) -> void:
 	_reset_shop_state()
 	if typeof(raw_shop) != TYPE_DICTIONARY:
@@ -892,6 +1028,78 @@ func _reset_shop_state() -> void:
 	shop_consumed_premium = 0
 	shop_spawn_timer = Config.SHOP_CUSTOMER_INITIAL_SPAWN
 	shop_customers = []
+
+func _load_market_snapshot(raw_market: Variant) -> void:
+	_reset_market_state()
+	if typeof(raw_market) != TYPE_DICTIONARY:
+		return
+
+	var source: Dictionary = raw_market
+	market_timer = maxf(0.0, float(source.get("timer", source.get("marketTimer", Config.MARKET_INITIAL_TIMER))))
+	market_ore_sold = max(0, int(source.get("ore_sold", source.get("oreSold", 0))))
+	market_part_sold = max(0, int(source.get("part_sold", source.get("partSold", 0))))
+	market_revenue = max(0, int(source.get("revenue", 0)))
+	market_quotes[Config.ITEM_ORE] = _deserialize_market_quote(source.get("ore", {}), Config.ITEM_ORE)
+	market_quotes[Config.ITEM_PART] = _deserialize_market_quote(source.get("part", {}), Config.ITEM_PART)
+
+func _reset_market_state() -> void:
+	market_timer = Config.MARKET_INITIAL_TIMER
+	market_ore_sold = 0
+	market_part_sold = 0
+	market_revenue = 0
+	market_quotes = {
+		Config.ITEM_ORE: _create_market_quote(Config.ITEM_ORE),
+		Config.ITEM_PART: _create_market_quote(Config.ITEM_PART),
+	}
+
+func _ensure_market_quotes() -> void:
+	if not market_quotes.has(Config.ITEM_ORE):
+		market_quotes[Config.ITEM_ORE] = _create_market_quote(Config.ITEM_ORE)
+	else:
+		market_quotes[Config.ITEM_ORE] = _refresh_market_quote(market_quotes[Config.ITEM_ORE], Config.ITEM_ORE)
+
+	if not market_quotes.has(Config.ITEM_PART):
+		market_quotes[Config.ITEM_PART] = _create_market_quote(Config.ITEM_PART)
+	else:
+		market_quotes[Config.ITEM_PART] = _refresh_market_quote(market_quotes[Config.ITEM_PART], Config.ITEM_PART)
+
+func _create_market_quote(item_type: String) -> Dictionary:
+	var cost := Config.production_cost(item_type)
+	var bid := Config.market_bid(cost)
+	return {
+		"item_type": item_type,
+		"cost": cost,
+		"bid": bid,
+		"ask": Config.market_ask(cost),
+		"price": bid,
+		"base": cost,
+		"demand": 1.0,
+		"pressure": 0.0,
+		"last_price": bid,
+	}
+
+func _refresh_market_quote(quote: Dictionary, item_type: String) -> Dictionary:
+	var cost := Config.production_cost(item_type)
+	var bid := Config.market_bid(cost)
+	quote["item_type"] = item_type
+	quote["cost"] = cost
+	quote["base"] = cost
+	quote["last_price"] = int(quote.get("price", quote.get("bid", bid)))
+	quote["bid"] = bid
+	quote["ask"] = Config.market_ask(cost)
+	quote["price"] = bid
+	return quote
+
+func _deserialize_market_quote(raw_quote: Variant, item_type: String) -> Dictionary:
+	var quote := _create_market_quote(item_type)
+	if typeof(raw_quote) != TYPE_DICTIONARY:
+		return quote
+
+	var source: Dictionary = raw_quote
+	quote["demand"] = clampf(float(source.get("demand", 1.0)), 0.0, 10.0)
+	quote["pressure"] = maxf(0.0, float(source.get("pressure", 0.0)))
+	quote["last_price"] = max(1, int(source.get("last_price", source.get("lastPrice", quote["bid"]))))
+	return _refresh_market_quote(quote, item_type)
 
 func _seed_shop_from_legacy_parts(count: int) -> void:
 	for _index in range(max(0, count)):

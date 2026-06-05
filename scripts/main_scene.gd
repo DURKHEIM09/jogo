@@ -78,6 +78,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		_update_hud()
 		return
 
+	if key_event.keycode == KEY_M:
+		var earned: int = factory_state.sell_base_part_to_market(1)
+		last_action = "Mercado NPC: +$%d." % earned if earned > 0 else "Mercado NPC: sem peca base."
+		_update_hud()
+		return
+
 	var next_tool := _tool_from_key(key_event.keycode)
 	if next_tool != "":
 		factory_state.select_tool(next_tool)
@@ -119,7 +125,7 @@ func _create_hud() -> void:
 	hud_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.75))
 	hud_label.add_theme_constant_override("shadow_offset_x", 1)
 	hud_label.add_theme_constant_override("shadow_offset_y", 1)
-	hud_label.size = Vector2(1232.0, 80.0)
+	hud_label.size = Vector2(1232.0, 116.0)
 	hud_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hud_layer.add_child(hud_label)
 
@@ -128,9 +134,12 @@ func _update_hud() -> void:
 		return
 
 	var selected_tool := String(factory_state.selected_tool)
+	var market: Dictionary = factory_state.get_market_report()
+	var ore_quote: Dictionary = market["ore"]
+	var part_quote: Dictionary = market["part"]
 	if factory_state.mode == Config.MODE_SHOP:
 		var report: Dictionary = factory_state.get_shop_report()
-		hud_label.text = "Modo: Loja   Creditos: %d   Estoque: %d   Base/Prem: %d/%d   Qualidade: %.2f   Melhor: %.2f   Preco: $%d\nDemanda: %s   Reputacao: %d   Clientes: %d   Perdidos: %d   Receita: %d   Vendas: %d   Gargalo: %s   %s" % [
+		hud_label.text = "Modo: Loja   Creditos: %d   Estoque: %d   Base/Prem: %d/%d   Qualidade: %.2f   Melhor: %.2f   Preco: $%d\nDemanda: %s   Reputacao: %d   Clientes: %d   Perdidos: %d   Receita loja: %d   Vendas: %d   Gargalo: %s\nMercado NPC: Minerio $%d/$%d   Peca $%d/$%d   Premium fora: %d   Receita NPC: %d   %s" % [
 			int(factory_state.money),
 			int(report["stock"]),
 			int(report["base_stock"]),
@@ -145,11 +154,17 @@ func _update_hud() -> void:
 			int(report["revenue"]),
 			int(report["sales"]),
 			String(report["bottleneck"]),
+			int(ore_quote["bid"]),
+			int(ore_quote["ask"]),
+			int(part_quote["bid"]),
+			int(part_quote["ask"]),
+			int(market["premium_stock"]),
+			int(market["revenue"]),
 			last_action,
 		]
 		return
 
-	hud_label.text = "Modo: Fabrica   Creditos: %d   Pecas: %d   Loja: %d   Itens: %d   Energia: %d/%d   Taxa: %d/min   Ferramenta: %s $%d   %s" % [
+	hud_label.text = "Modo: Fabrica   Creditos: %d   Pecas: %d   Loja: %d   Itens: %d   Energia: %d/%d   Taxa: %d/min   Ferramenta: %s $%d\nMercado NPC: Minerio $%d/$%d   Peca $%d/$%d   Premium fora: %d   Receita NPC: %d   %s" % [
 		int(factory_state.money),
 		int(factory_state.parts),
 		factory_state.get_shop_stock(),
@@ -159,6 +174,12 @@ func _update_hud() -> void:
 		factory_state.get_parts_per_minute(),
 		Config.tool_label(selected_tool),
 		Config.tool_cost(selected_tool),
+		int(ore_quote["bid"]),
+		int(ore_quote["ask"]),
+		int(part_quote["bid"]),
+		int(part_quote["ask"]),
+		int(market["premium_stock"]),
+		int(market["revenue"]),
 		last_action,
 	]
 

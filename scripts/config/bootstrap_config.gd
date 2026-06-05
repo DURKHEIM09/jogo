@@ -94,6 +94,23 @@ const SHOP_CUSTOMER_WAIT_VARIANCE := 1.2
 const SHOP_REPUTATION_STOCKOUT_PENALTY := 1.4
 const SHOP_REPUTATION_PRICE_PENALTY := 0.9
 const SHOP_REPUTATION_SALE_GAIN := 0.45
+const MARKET_BID_FACTOR := 0.7
+const MARKET_ASK_FACTOR := 1.5
+const MARKET_COST_ORE := 1
+const MARKET_COST_PART := 4
+const MARKET_INITIAL_TIMER := 0.0
+const MARKET_TIMER_MIN := 3.5
+const MARKET_TIMER_VARIANCE := 2.5
+const MARKET_ORE_DEMAND_MIN := 0.45
+const MARKET_ORE_DEMAND_MAX := 1.85
+const MARKET_ORE_VOLATILITY := 0.18
+const MARKET_PART_DEMAND_MIN := 0.55
+const MARKET_PART_DEMAND_MAX := 2.2
+const MARKET_PART_VOLATILITY := 0.22
+const MARKET_PRESSURE_DECAY_ORE := 0.035
+const MARKET_PRESSURE_DECAY_PART := 0.025
+const MARKET_SELL_PRESSURE_ORE := 0.018
+const MARKET_SELL_PRESSURE_PART := 0.035
 const COLOR_CUSTOMER_A := Color(0.463, 0.847, 1.0, 1.0)
 const COLOR_CUSTOMER_B := Color(0.957, 0.714, 0.302, 1.0)
 const COLOR_CUSTOMER_C := Color(1.0, 0.561, 0.639, 1.0)
@@ -141,6 +158,28 @@ static func customer_color(index: int, bought: bool) -> Color:
 			return COLOR_CUSTOMER_B
 		_:
 			return COLOR_CUSTOMER_C
+
+static func production_cost(item_type: String, tier := DEFAULT_ITEM_TIER) -> int:
+	var base_cost := MARKET_COST_ORE
+	if item_type == ITEM_PART:
+		base_cost = MARKET_COST_PART
+	return int(base_cost * pow(2.0, float(max(0, tier - 1))))
+
+static func market_bid(cost: int) -> int:
+	return max(1, int(floor(float(cost) * MARKET_BID_FACTOR)))
+
+static func market_ask(cost: int) -> int:
+	var bid := market_bid(cost)
+	return max(bid + 1, int(ceil(float(cost) * MARKET_ASK_FACTOR)))
+
+static func market_item_label(item_type: String) -> String:
+	match item_type:
+		ITEM_PART:
+			return "Peca"
+		ITEM_ORE:
+			return "Minerio"
+		_:
+			return "Item"
 
 static func is_directional_tool(tool: String) -> bool:
 	return (
