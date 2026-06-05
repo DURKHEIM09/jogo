@@ -37,9 +37,7 @@ const COLOR_SHOP_COUNTER := Color(0.184, 0.451, 0.420, 1.0)
 const INITIAL_MONEY := 320
 const BUILDING_REFUND_RATE := 0.45
 const DIRECTION_COUNT := 4
-const ORE_BASE_AMOUNT := 800
-const ORE_AMOUNT_VARIANCE := 420
-const MINER_INTERVAL := 1.18
+const BUYER_INTERVAL := 1.18
 const INSERTER_SPEED := 1.7
 const ASSEMBLER_BUILD_TIME := 2.15
 const ASSEMBLER_INPUT_PER_PART := 2
@@ -56,7 +54,7 @@ const SIMULATION_DT_CLAMP := 0.25
 const RATE_WINDOW_SECONDS := 60.0
 const POWER_GENERATOR_OUTPUT := 90
 const POWER_GENERATOR_RADIUS := 7
-const POWER_USAGE_MINER := 10
+const POWER_USAGE_BUYER := 10
 const POWER_USAGE_ASSEMBLER := 18
 const POWER_USAGE_INSERTER := 4
 const COLOR_ITEM_ORE := Color(0.957, 0.714, 0.302, 1.0)
@@ -151,25 +149,32 @@ const CUSTOMER_LEAVING := "leaving"
 
 const TOOL_BELT := "belt"
 const TOOL_INSERTER := "inserter"
-const TOOL_MINER := "miner"
+const TOOL_BUYER := "buyer"
+const TOOL_LEGACY_MINER := "miner"
 const TOOL_ASSEMBLER := "assembler"
 const TOOL_STORAGE := "storage"
 const TOOL_GENERATOR := "generator"
 const TOOL_ERASE := "erase"
 
 static func is_known_tool(tool: String) -> bool:
+	var normalized_tool := normalize_tool(tool)
 	return (
-		tool == TOOL_BELT
-		or tool == TOOL_INSERTER
-		or tool == TOOL_MINER
-		or tool == TOOL_ASSEMBLER
-		or tool == TOOL_STORAGE
-		or tool == TOOL_GENERATOR
-		or tool == TOOL_ERASE
+		normalized_tool == TOOL_BELT
+		or normalized_tool == TOOL_INSERTER
+		or normalized_tool == TOOL_BUYER
+		or normalized_tool == TOOL_ASSEMBLER
+		or normalized_tool == TOOL_STORAGE
+		or normalized_tool == TOOL_GENERATOR
+		or normalized_tool == TOOL_ERASE
 	)
 
 static func is_known_mode(next_mode: String) -> bool:
 	return next_mode == MODE_FACTORY or next_mode == MODE_SHOP
+
+static func normalize_tool(tool: String) -> String:
+	if tool == TOOL_LEGACY_MINER:
+		return TOOL_BUYER
+	return tool
 
 static func customer_color(index: int, bought: bool) -> Color:
 	if bought:
@@ -205,20 +210,21 @@ static func market_item_label(item_type: String) -> String:
 			return "Item"
 
 static func is_directional_tool(tool: String) -> bool:
+	var normalized_tool := normalize_tool(tool)
 	return (
-		tool == TOOL_BELT
-		or tool == TOOL_INSERTER
-		or tool == TOOL_MINER
-		or tool == TOOL_ASSEMBLER
+		normalized_tool == TOOL_BELT
+		or normalized_tool == TOOL_INSERTER
+		or normalized_tool == TOOL_BUYER
+		or normalized_tool == TOOL_ASSEMBLER
 	)
 
 static func tool_cost(tool: String) -> int:
-	match tool:
+	match normalize_tool(tool):
 		TOOL_BELT:
 			return 4
 		TOOL_INSERTER:
 			return 16
-		TOOL_MINER:
+		TOOL_BUYER:
 			return 26
 		TOOL_ASSEMBLER:
 			return 46
@@ -230,9 +236,9 @@ static func tool_cost(tool: String) -> int:
 			return 0
 
 static func power_need(tool: String) -> int:
-	match tool:
-		TOOL_MINER:
-			return POWER_USAGE_MINER
+	match normalize_tool(tool):
+		TOOL_BUYER:
+			return POWER_USAGE_BUYER
 		TOOL_ASSEMBLER:
 			return POWER_USAGE_ASSEMBLER
 		TOOL_INSERTER:
@@ -244,13 +250,13 @@ static func tool_refund(tool: String) -> int:
 	return int(floor(float(tool_cost(tool)) * BUILDING_REFUND_RATE))
 
 static func tool_color(tool: String) -> Color:
-	match tool:
+	match normalize_tool(tool):
 		TOOL_BELT:
 			return Color(0.212, 0.255, 0.314, 1.0)
 		TOOL_INSERTER:
 			return Color(0.620, 0.451, 0.847, 1.0)
-		TOOL_MINER:
-			return Color(0.659, 0.404, 0.271, 1.0)
+		TOOL_BUYER:
+			return Color(0.184, 0.451, 0.420, 1.0)
 		TOOL_ASSEMBLER:
 			return Color(0.204, 0.412, 0.510, 1.0)
 		TOOL_STORAGE:
@@ -263,13 +269,13 @@ static func tool_color(tool: String) -> Color:
 			return COLOR_TOOL_DISABLED
 
 static func tool_label(tool: String) -> String:
-	match tool:
+	match normalize_tool(tool):
 		TOOL_BELT:
 			return "Esteira"
 		TOOL_INSERTER:
 			return "Braco"
-		TOOL_MINER:
-			return "Minerador"
+		TOOL_BUYER:
+			return "Comprador"
 		TOOL_ASSEMBLER:
 			return "Montador"
 		TOOL_STORAGE:
@@ -282,13 +288,13 @@ static func tool_label(tool: String) -> String:
 			return "Desconhecido"
 
 static func tool_mark(tool: String) -> String:
-	match tool:
+	match normalize_tool(tool):
 		TOOL_BELT:
 			return ">"
 		TOOL_INSERTER:
 			return "I"
-		TOOL_MINER:
-			return "M"
+		TOOL_BUYER:
+			return "D"
 		TOOL_ASSEMBLER:
 			return "A"
 		TOOL_STORAGE:
@@ -313,10 +319,3 @@ static func direction_offset(dir: int) -> Vector2i:
 			return Vector2i.LEFT
 		_:
 			return Vector2i.UP
-
-static func ore_patch_specs() -> Array:
-	return [
-		{"center": Vector2(0.22, 0.24), "radius": Vector2i(4, 6)},
-		{"center": Vector2(0.76, 0.66), "radius": Vector2i(4, 5)},
-		{"center": Vector2(0.35, 0.78), "radius": Vector2i(3, 4)},
-	]

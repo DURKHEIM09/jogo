@@ -8,18 +8,27 @@ func _ready() -> void:
 	state.shop_spawn_timer = 999.0
 	if not _expect(state.money == Config.INITIAL_MONEY, "initial money mismatch"):
 		return
+	if not _expect(state.get_resources().is_empty(), "resource patches should not exist"):
+		return
+	if not _expect(not state.has_resource(Vector2i(0, 0)), "resource lookup should stay empty"):
+		return
 	if not _expect(Config.production_cost(Config.ITEM_ORE) == 1, "ore production cost mismatch"):
 		return
 	if not _expect(Config.production_cost(Config.ITEM_PART) == 4, "part production cost mismatch"):
 		return
 	if not _expect(state.is_market_bid_factor_safe(), "market bid/ask factors are unsafe"):
 		return
+
 	var initial_market: Dictionary = state.get_market_report()
 	var initial_ore_quote: Dictionary = initial_market["ore"]
 	var initial_part_quote: Dictionary = initial_market["part"]
 	if not _expect(int(initial_ore_quote["bid"]) == 1 and int(initial_ore_quote["ask"]) == 2, "ore market quote mismatch"):
 		return
 	if not _expect(int(initial_part_quote["bid"]) == 2 and int(initial_part_quote["ask"]) == 6, "part market quote mismatch"):
+		return
+	if not _expect(Config.ASSEMBLER_INPUT_PER_PART * int(initial_ore_quote["ask"]) < Config.SHOP_INITIAL_PRICE, "store loop is not profitable"):
+		return
+	if not _expect(Config.tool_label(Config.TOOL_BUYER) == "Comprador", "buyer label mismatch"):
 		return
 
 	var cell := Vector2i(2, 3)
@@ -44,28 +53,11 @@ func _ready() -> void:
 	if not _expect(state.money == expected_money, "refund mismatch"):
 		return
 
-	if not _expect(state.get_resources().size() > 0, "resources were not generated"):
-		return
-
-	var empty_cell := _first_empty_resource_cell(state)
-	if not _expect(empty_cell != Vector2i(-1, -1), "could not find empty resource cell"):
-		return
-
-	state.select_tool(Config.TOOL_MINER)
-	var blocked_miner: Dictionary = state.try_apply_tool(empty_cell)
-	if not _expect(not bool(blocked_miner["ok"]), "miner should require ore cell"):
-		return
-	if not _expect(state.money == expected_money, "blocked miner changed money"):
-		return
-
 	while state.selected_dir != 0:
 		state.rotate_selection()
 
-	var ore_cell: Vector2i = _first_ore_cell_with_right_room(state, 8)
-	if not _expect(ore_cell != Vector2i(-1, -1), "could not find ore cell with enough right-side room"):
-		return
-
-	var generator_cell := _generator_cell_for(ore_cell)
+	var buyer_cell := Vector2i(2, 3)
+	var generator_cell := _generator_cell_for(buyer_cell)
 	state.select_tool(Config.TOOL_GENERATOR)
 	var placed_generator: Dictionary = state.try_apply_tool(generator_cell)
 	if not _expect(bool(placed_generator["ok"]), "generator placement failed"):
@@ -75,35 +67,47 @@ func _ready() -> void:
 
 	var money_after_generator := expected_money - Config.tool_cost(Config.TOOL_GENERATOR)
 
-	state.select_tool(Config.TOOL_MINER)
-	var placed_miner: Dictionary = state.try_apply_tool(ore_cell)
-	if not _expect(bool(placed_miner["ok"]), "miner placement on ore failed"):
+	state.select_tool(Config.TOOL_BUYER)
+	var placed_buyer: Dictionary = state.try_apply_tool(buyer_cell)
+	if not _expect(bool(placed_buyer["ok"]), "buyer placement failed"):
 		return
-	if not _expect(state.money == money_after_generator - Config.tool_cost(Config.TOOL_MINER), "miner cost mismatch"):
+	if not _expect(state.money == money_after_generator - Config.tool_cost(Config.TOOL_BUYER), "buyer cost mismatch"):
 		return
-	if not _expect(bool(state.get_building(ore_cell).get("powered", false)), "covered miner should be powered"):
+	if not _expect(bool(state.get_building(buyer_cell).get("powered", false)), "covered buyer should be powered"):
 		return
-	if not _expect(state.power_used == Config.POWER_USAGE_MINER, "miner power usage mismatch"):
+	if not _expect(state.power_used == Config.POWER_USAGE_BUYER, "buyer power usage mismatch"):
 		return
 
-	var amount_before := state.get_resource_amount(ore_cell)
-	_advance(state, Config.MINER_INTERVAL * 2.0)
-	if not _expect(state.get_items().is_empty(), "miner should wait for belt output"):
+	var buyer_money_wait_before: int = state.money
+	_advance(state, Config.BUYER_INTERVAL * 2.0)
+	if not _expect(state.get_items().is_empty(), "buyer should wait for belt output"):
 		return
-	if not _expect(state.get_resource_amount(ore_cell) == amount_before, "miner consumed resource without belt"):
+	if not _expect(state.money == buyer_money_wait_before, "buyer spent money without output"):
+		return
+	if not _expect(int(state.get_market_report()["ore_bought"]) == 0, "buyer bought ore without output"):
 		return
 
 	state.select_tool(Config.TOOL_BELT)
-	var belt_cell := ore_cell + Config.direction_offset(0)
+	var belt_cell := buyer_cell + Config.direction_offset(0)
 	var placed_belt: Dictionary = state.try_apply_tool(belt_cell)
-	if not _expect(bool(placed_belt["ok"]), "belt placement for miner output failed"):
+	if not _expect(bool(placed_belt["ok"]), "belt placement for buyer output failed"):
 		return
 
-	_advance(state, Config.MINER_INTERVAL * 2.0)
-	var spawned_items := state.get_items().size()
-	if not _expect(spawned_items >= 1, "miner did not spawn ore item"):
+	var buyer_money_before: int = state.money
+	var input_spend_before: int = int(state.get_market_report()["input_spend"])
+	var ore_bought_before: int = int(state.get_market_report()["ore_bought"])
+	var ore_ask: int = int(state.get_market_quote(Config.ITEM_ORE)["ask"])
+	_advance(state, Config.BUYER_INTERVAL * 2.0)
+	var buyer_report: Dictionary = state.get_market_report()
+	var bought_delta: int = int(buyer_report["ore_bought"]) - ore_bought_before
+	var spend_delta: int = int(buyer_report["input_spend"]) - input_spend_before
+	if not _expect(state.get_items().size() >= 1, "buyer did not spawn ore item"):
 		return
-	if not _expect(state.get_resource_amount(ore_cell) == amount_before - spawned_items, "miner resource consumption mismatch"):
+	if not _expect(bought_delta >= 1, "buyer did not count bought ore"):
+		return
+	if not _expect(spend_delta == bought_delta * ore_ask, "buyer input spend mismatch"):
+		return
+	if not _expect(state.money == buyer_money_before - spend_delta, "buyer did not pay market ask"):
 		return
 	if not _expect(_has_item_at(state, belt_cell), "belt did not move ore item into its cell"):
 		return
@@ -168,7 +172,7 @@ func _ready() -> void:
 		return
 
 	var expected_power_used := (
-		Config.POWER_USAGE_MINER
+		Config.POWER_USAGE_BUYER
 		+ Config.POWER_USAGE_INSERTER * 3
 		+ Config.POWER_USAGE_ASSEMBLER
 	)
@@ -197,6 +201,8 @@ func _ready() -> void:
 		return
 	if not _expect(int(market_report["premium_stock"]) == state.get_shop_premium_stock(), "market premium signal mismatch"):
 		return
+	if not _expect(int(market_report["input_spend"]) > 0, "market report did not track input spend"):
+		return
 	if not _expect(state.set_mode(Config.MODE_SHOP) and state.mode == Config.MODE_SHOP, "shop mode switch failed"):
 		return
 
@@ -204,6 +210,8 @@ func _ready() -> void:
 	if not _expect(not _snapshot_persists_powered(snapshot), "snapshot should not persist raw powered"):
 		return
 	if not _expect(snapshot.has("market"), "snapshot missing market"):
+		return
+	if not _expect(_as_array(snapshot.get("resources", [])).is_empty(), "snapshot should not persist resource patches"):
 		return
 	var restored = FactoryStateScript.new()
 	if not _expect(restored.load_snapshot(snapshot), "snapshot load failed"):
@@ -214,7 +222,7 @@ func _ready() -> void:
 		return
 	if not _expect(restored.power_used == state.power_used and restored.power_capacity == state.power_capacity, "snapshot power totals mismatch"):
 		return
-	if not _expect(bool(restored.get_building(ore_cell).get("powered", false)), "snapshot did not recalculate miner power"):
+	if not _expect(bool(restored.get_building(buyer_cell).get("powered", false)), "snapshot did not recalculate buyer power"):
 		return
 	if not _expect(restored.mode == Config.MODE_SHOP, "snapshot mode mismatch"):
 		return
@@ -226,6 +234,9 @@ func _ready() -> void:
 	var restored_part_quote: Dictionary = restored_market["part"]
 	if not _expect(int(restored_part_quote["bid"]) == int(market_part_quote["bid"]), "snapshot market quote mismatch"):
 		return
+	if not _expect(int(restored_market["input_spend"]) == int(market_report["input_spend"]), "snapshot input spend mismatch"):
+		return
+
 	var legacy_snapshot: Dictionary = snapshot.duplicate(true)
 	legacy_snapshot.erase("shop")
 	var legacy_restored = FactoryStateScript.new()
@@ -234,6 +245,36 @@ func _ready() -> void:
 	if not _expect(legacy_restored.get_shop_stock() == legacy_restored.parts, "legacy parts did not migrate to shop stock"):
 		return
 	if not _expect(legacy_restored.get_shop_base_stock() == legacy_restored.parts, "legacy migrated stock should be base stock"):
+		return
+
+	var legacy_resource_snapshot: Dictionary = snapshot.duplicate(true)
+	legacy_resource_snapshot["resources"] = [
+		{"cell": {"x": 1, "y": 1}, "amount": 99, "phase": 0.0}
+	]
+	var resource_restored = FactoryStateScript.new()
+	if not _expect(resource_restored.load_snapshot(legacy_resource_snapshot), "legacy resource snapshot load failed"):
+		return
+	if not _expect(resource_restored.get_resources().is_empty(), "legacy resources should be ignored"):
+		return
+
+	var legacy_buyer_snapshot := FactoryStateScript.new().to_snapshot()
+	legacy_buyer_snapshot["buildings"] = [
+		{
+			"type": Config.TOOL_LEGACY_MINER,
+			"cell": {"x": 3, "y": 3},
+			"dir": 0,
+			"timer": 0.0,
+			"input_ore": 0,
+			"output_parts": 0,
+			"output_queue": [],
+			"held": {},
+			"progress": 0.0,
+		}
+	]
+	var legacy_buyer = FactoryStateScript.new()
+	if not _expect(legacy_buyer.load_snapshot(legacy_buyer_snapshot), "legacy miner snapshot load failed"):
+		return
+	if not _expect(String(legacy_buyer.get_building(Vector2i(3, 3)).get("type", "")) == Config.TOOL_BUYER, "legacy miner should migrate to buyer"):
 		return
 
 	var save_path := "user://factoryops_smoke_save.json"
@@ -256,6 +297,8 @@ func _ready() -> void:
 	var loaded_part_quote: Dictionary = loaded_market["part"]
 	if not _expect(int(loaded_part_quote["ask"]) == int(market_part_quote["ask"]), "disk save market quote mismatch"):
 		return
+	if not _expect(int(loaded_market["input_spend"]) == int(market_report["input_spend"]), "disk save input spend mismatch"):
+		return
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 
 	state.select_tool(Config.TOOL_ERASE)
@@ -264,12 +307,30 @@ func _ready() -> void:
 		return
 	if not _expect(state.power_capacity == 0 and state.power_used == 0, "generator removal did not clear power totals"):
 		return
-	if not _expect(not bool(state.get_building(ore_cell).get("powered", true)), "miner stayed powered after generator removal"):
+	if not _expect(not bool(state.get_building(buyer_cell).get("powered", true)), "buyer stayed powered after generator removal"):
 		return
 
 	var parts_before_unpowered: int = state.parts
-	_advance(state, Config.MINER_INTERVAL * 2.0)
+	_advance(state, Config.BUYER_INTERVAL * 2.0)
 	if not _expect(state.parts == parts_before_unpowered, "unpowered factory kept producing after generator removal"):
+		return
+
+	var no_cash_buyer = FactoryStateScript.new()
+	no_cash_buyer.shop_spawn_timer = 999.0
+	no_cash_buyer.select_tool(Config.TOOL_GENERATOR)
+	no_cash_buyer.try_apply_tool(Vector2i(1, 2))
+	no_cash_buyer.select_tool(Config.TOOL_BUYER)
+	no_cash_buyer.try_apply_tool(Vector2i(1, 1))
+	no_cash_buyer.select_tool(Config.TOOL_BELT)
+	no_cash_buyer.try_apply_tool(Vector2i(2, 1))
+	no_cash_buyer.money = 0
+	_advance(no_cash_buyer, Config.BUYER_INTERVAL * 2.0)
+	var no_cash_report: Dictionary = no_cash_buyer.get_market_report()
+	if not _expect(no_cash_buyer.money == 0, "no-cash buyer should not create debt"):
+		return
+	if not _expect(no_cash_buyer.get_items().is_empty(), "no-cash buyer should not spawn ore"):
+		return
+	if not _expect(int(no_cash_report["ore_bought"]) == 0 and int(no_cash_report["input_spend"]) == 0, "no-cash buyer should not buy ore"):
 		return
 
 	var sale_stock_before := state.get_shop_stock()
@@ -490,6 +551,8 @@ func _ready() -> void:
 	var ore_market_report: Dictionary = ore_market.get_market_report()
 	if not _expect(int(ore_market_report["ore_sold"]) == 1, "ore market sale count mismatch"):
 		return
+	if not _expect(int(ore_market_report["ore_bought"]) == 0, "manual ore liquidation should not count as bought"):
+		return
 
 	var part_market = FactoryStateScript.new()
 	part_market.shop_spawn_timer = 999.0
@@ -529,25 +592,10 @@ func _expect(condition: bool, message: String) -> bool:
 	get_tree().quit(1)
 	return false
 
-func _first_empty_resource_cell(state) -> Vector2i:
-	for y in range(Config.GRID_ROWS):
-		for x in range(Config.GRID_COLUMNS):
-			var cell := Vector2i(x, y)
-			if not state.has_resource(cell):
-				return cell
-	return Vector2i(-1, -1)
-
-func _first_ore_cell_with_right_room(state, right_room: int) -> Vector2i:
-	for resource in state.get_resources():
-		var cell: Vector2i = resource.get("cell", Vector2i(-1, -1))
-		if cell.x + right_room < Config.GRID_COLUMNS:
-			return cell
-	return Vector2i(-1, -1)
-
-func _generator_cell_for(ore_cell: Vector2i) -> Vector2i:
-	if ore_cell.y + 1 < Config.GRID_ROWS:
-		return ore_cell + Vector2i.DOWN
-	return ore_cell + Vector2i.UP
+func _generator_cell_for(target_cell: Vector2i) -> Vector2i:
+	if target_cell.y + 1 < Config.GRID_ROWS:
+		return target_cell + Vector2i.DOWN
+	return target_cell + Vector2i.UP
 
 func _advance(state, seconds: float) -> void:
 	var remaining := seconds
@@ -568,6 +616,11 @@ func _snapshot_persists_powered(snapshot: Dictionary) -> bool:
 		if typeof(raw_building) == TYPE_DICTIONARY and Dictionary(raw_building).has("powered"):
 			return true
 	return false
+
+func _as_array(value: Variant) -> Array:
+	if typeof(value) != TYPE_ARRAY:
+		return []
+	return value
 
 func _test_part(quality: float) -> Dictionary:
 	return {

@@ -40,18 +40,19 @@ var market_timer := Config.MARKET_INITIAL_TIMER
 var market_quotes := {}
 var market_ore_sold := 0
 var market_part_sold := 0
+var market_ore_bought := 0
+var market_input_spend := 0
 var market_revenue := 0
 
 func _init() -> void:
 	rng.randomize()
 	_reset_shop_state()
 	_reset_market_state()
-	_generate_resources()
 
 func select_tool(tool: String) -> bool:
 	if not Config.is_known_tool(tool):
 		return false
-	selected_tool = tool
+	selected_tool = Config.normalize_tool(tool)
 	emit_signal("changed")
 	return true
 
@@ -67,10 +68,10 @@ func tick(delta: float) -> void:
 	for key in buildings.keys():
 		var cell: Vector2i = key
 		var building: Dictionary = buildings[cell]
-		var building_type := String(building.get("type", ""))
+		var building_type := Config.normalize_tool(String(building.get("type", "")))
 
-		if building_type == Config.TOOL_MINER:
-			changed_this_tick = _update_miner(cell, building, dt) or changed_this_tick
+		if building_type == Config.TOOL_BUYER:
+			changed_this_tick = _update_buyer(cell, building, dt) or changed_this_tick
 		elif building_type == Config.TOOL_INSERTER:
 			changed_this_tick = _update_inserter(cell, building, dt) or changed_this_tick
 		elif building_type == Config.TOOL_ASSEMBLER:
@@ -96,18 +97,16 @@ func get_buildings() -> Array:
 	return buildings.values()
 
 func get_resources() -> Array:
-	return resources.values()
+	return []
 
 func get_items() -> Array:
 	return items
 
 func has_resource(cell: Vector2i) -> bool:
-	return resources.has(cell) and int(resources[cell].get("amount", 0)) > 0
+	return false
 
 func get_resource_amount(cell: Vector2i) -> int:
-	if not resources.has(cell):
-		return 0
-	return int(resources[cell].get("amount", 0))
+	return 0
 
 func get_parts_per_minute() -> int:
 	_update_rate_window()
@@ -304,6 +303,8 @@ func get_market_report() -> Dictionary:
 		"part": get_market_quote(Config.ITEM_PART),
 		"ore_sold": market_ore_sold,
 		"part_sold": market_part_sold,
+		"ore_bought": market_ore_bought,
+		"input_spend": market_input_spend,
 		"revenue": market_revenue,
 		"premium_stock": get_shop_premium_stock(),
 		"average_quality": get_shop_average_quality(),
@@ -316,6 +317,9 @@ func is_market_bid_factor_safe() -> bool:
 
 func sell_ore_to_market(amount := 1) -> int:
 	return _sell_to_market(Config.ITEM_ORE, max(0, amount))
+
+func buy_ore_from_market(amount := 1) -> int:
+	return _buy_ore_from_market(max(0, amount))
 
 func sell_base_part_to_market(amount := 1) -> int:
 	var quantity := _consume_base_shop_stock(max(0, amount))
@@ -439,7 +443,7 @@ func load_snapshot(snapshot: Dictionary) -> bool:
 	mode = String(snapshot.get("mode", Config.MODE_FACTORY))
 	if not Config.is_known_mode(mode):
 		mode = Config.MODE_FACTORY
-	selected_tool = String(snapshot.get("selected_tool", Config.TOOL_BELT))
+	selected_tool = Config.normalize_tool(String(snapshot.get("selected_tool", Config.TOOL_BELT)))
 	if not Config.is_known_tool(selected_tool):
 		selected_tool = Config.TOOL_BELT
 	selected_dir = posmod(int(snapshot.get("selected_dir", 0)), Config.DIRECTION_COUNT)
@@ -463,13 +467,6 @@ func load_snapshot(snapshot: Dictionary) -> bool:
 			buildings[cell] = building
 
 	resources.clear()
-	for raw_resource in _as_array(snapshot.get("resources", [])):
-		var resource := _deserialize_resource(raw_resource)
-		if resource.is_empty():
-			continue
-		var cell: Vector2i = resource["cell"]
-		if _is_cell_in_bounds(cell) and int(resource.get("amount", 0)) > 0:
-			resources[cell] = resource
 
 	items = _deserialize_items(snapshot.get("items", []))
 	recalculate_power()
@@ -490,9 +487,6 @@ func _try_place(cell: Vector2i) -> Dictionary:
 	var cost := Config.tool_cost(selected_tool)
 	if money < cost:
 		return _result(false, "blocked", "Creditos insuficientes.", cell, 0)
-	if selected_tool == Config.TOOL_MINER and not has_resource(cell):
-		return _result(false, "blocked", "Minerador precisa de minerio.", cell, 0)
-
 	var building := {
 		"type": selected_tool,
 		"cell": cell,
@@ -524,25 +518,29 @@ func _try_remove(cell: Vector2i) -> Dictionary:
 	emit_signal("changed")
 	return _result(true, "removed", "Removido.", cell, refund)
 
-func _update_miner(cell: Vector2i, building: Dictionary, dt: float) -> bool:
+func _update_buyer(cell: Vector2i, building: Dictionary, dt: float) -> bool:
 	if not bool(building.get("powered", true)):
-		return false
-	if not has_resource(cell):
 		return false
 	if items.size() >= Config.ITEM_CAP:
 		return false
 
 	building["timer"] = float(building.get("timer", 0.0)) + dt
-	if float(building["timer"]) < Config.MINER_INTERVAL:
+	if float(building["timer"]) < Config.BUYER_INTERVAL:
 		buildings[cell] = building
 		return false
 	if not _output_can_accept(cell, int(building.get("dir", 0)), Config.ITEM_ORE):
 		buildings[cell] = building
 		return false
 
-	building["timer"] = float(building["timer"]) - Config.MINER_INTERVAL
+	var ore_ask := int(get_market_quote(Config.ITEM_ORE).get("ask", 1))
+	if money < ore_ask:
+		buildings[cell] = building
+		return false
+
+	building["timer"] = float(building["timer"]) - Config.BUYER_INTERVAL
 	buildings[cell] = building
-	_consume_resource(cell)
+	if _buy_ore_from_market(1) <= 0:
+		return false
 	_spawn_item(cell, int(building.get("dir", 0)), Config.ITEM_ORE)
 	return true
 
@@ -556,18 +554,6 @@ func _output_can_accept(cell: Vector2i, dir: int, item_type: String) -> bool:
 
 	var target := get_building(target_cell)
 	return String(target.get("type", "")) == Config.TOOL_BELT
-
-func _consume_resource(cell: Vector2i) -> void:
-	if not resources.has(cell):
-		return
-
-	var resource: Dictionary = resources[cell]
-	resource["amount"] = max(0, int(resource.get("amount", 0)) - 1)
-	if int(resource["amount"]) <= 0:
-		resources.erase(cell)
-		return
-
-	resources[cell] = resource
 
 func _spawn_item(cell: Vector2i, dir: int, item_type: String) -> void:
 	var item: Dictionary = {
@@ -827,6 +813,21 @@ func _sell_to_market(item_type: String, quantity: int) -> int:
 		stored_quote["pressure"] = float(stored_quote.get("pressure", 0.0)) + Config.MARKET_SELL_PRESSURE_ORE * quantity
 	market_quotes[item_type] = _refresh_market_quote(stored_quote, item_type)
 	return revenue
+
+func _buy_ore_from_market(quantity: int) -> int:
+	if quantity <= 0:
+		return 0
+
+	var quote := get_market_quote(Config.ITEM_ORE)
+	var price := int(quote.get("ask", 1))
+	var spend := price * quantity
+	if money < spend:
+		return 0
+
+	money -= spend
+	market_ore_bought += quantity
+	market_input_spend += spend
+	return spend
 
 func _update_employee(dt: float) -> bool:
 	if not bool(shop_employee.get("hired", false)):
@@ -1140,6 +1141,8 @@ func _serialize_market() -> Dictionary:
 		"timer": market_timer,
 		"ore_sold": market_ore_sold,
 		"part_sold": market_part_sold,
+		"ore_bought": market_ore_bought,
+		"input_spend": market_input_spend,
 		"revenue": market_revenue,
 		"ore": _serialize_market_quote(market_quotes[Config.ITEM_ORE]),
 		"part": _serialize_market_quote(market_quotes[Config.ITEM_PART]),
@@ -1245,6 +1248,8 @@ func _load_market_snapshot(raw_market: Variant) -> void:
 	market_timer = maxf(0.0, float(source.get("timer", source.get("marketTimer", Config.MARKET_INITIAL_TIMER))))
 	market_ore_sold = max(0, int(source.get("ore_sold", source.get("oreSold", 0))))
 	market_part_sold = max(0, int(source.get("part_sold", source.get("partSold", 0))))
+	market_ore_bought = max(0, int(source.get("ore_bought", source.get("oreBought", 0))))
+	market_input_spend = max(0, int(source.get("input_spend", source.get("inputSpend", 0))))
 	market_revenue = max(0, int(source.get("revenue", 0)))
 	market_quotes[Config.ITEM_ORE] = _deserialize_market_quote(source.get("ore", {}), Config.ITEM_ORE)
 	market_quotes[Config.ITEM_PART] = _deserialize_market_quote(source.get("part", {}), Config.ITEM_PART)
@@ -1253,6 +1258,8 @@ func _reset_market_state() -> void:
 	market_timer = Config.MARKET_INITIAL_TIMER
 	market_ore_sold = 0
 	market_part_sold = 0
+	market_ore_bought = 0
+	market_input_spend = 0
 	market_revenue = 0
 	market_quotes = {
 		Config.ITEM_ORE: _create_market_quote(Config.ITEM_ORE),
@@ -1354,7 +1361,7 @@ func _best_shop_inventory_quality() -> float:
 
 func _serialize_building(building: Dictionary) -> Dictionary:
 	return {
-		"type": String(building.get("type", "")),
+		"type": Config.normalize_tool(String(building.get("type", ""))),
 		"cell": _serialize_cell(building.get("cell", Vector2i(-1, -1))),
 		"dir": int(building.get("dir", 0)),
 		"timer": float(building.get("timer", 0.0)),
@@ -1371,7 +1378,7 @@ func _deserialize_building(raw_building: Variant) -> Dictionary:
 
 	var source: Dictionary = raw_building
 	var cell := _deserialize_cell(source.get("cell", {}))
-	var tool := String(source.get("type", ""))
+	var tool := Config.normalize_tool(String(source.get("type", "")))
 	if not Config.is_known_tool(tool) or tool == Config.TOOL_ERASE:
 		return {}
 
@@ -1391,25 +1398,7 @@ func _deserialize_building(raw_building: Variant) -> Dictionary:
 	}
 
 func _serialize_resources() -> Array:
-	var result: Array = []
-	for resource in resources.values():
-		result.append({
-			"cell": _serialize_cell(resource.get("cell", Vector2i(-1, -1))),
-			"amount": int(resource.get("amount", 0)),
-			"phase": float(resource.get("phase", 0.0)),
-		})
-	return result
-
-func _deserialize_resource(raw_resource: Variant) -> Dictionary:
-	if typeof(raw_resource) != TYPE_DICTIONARY:
-		return {}
-
-	var source: Dictionary = raw_resource
-	return {
-		"cell": _deserialize_cell(source.get("cell", {})),
-		"amount": max(0, int(source.get("amount", 0))),
-		"phase": float(source.get("phase", 0.0)),
-	}
+	return []
 
 func _serialize_items(source_items: Array) -> Array:
 	var result: Array = []
@@ -1538,45 +1527,6 @@ func _advance_item(item: Dictionary) -> bool:
 		return true
 
 	return false
-
-func _generate_resources() -> void:
-	resources.clear()
-
-	for spec in Config.ore_patch_specs():
-		var center_ratio: Vector2 = spec["center"]
-		var radius: Vector2i = spec["radius"]
-		var center := Vector2i(
-			int(floor(float(Config.GRID_COLUMNS) * center_ratio.x)),
-			int(floor(float(Config.GRID_ROWS) * center_ratio.y))
-		)
-		_add_ore_patch(center, radius)
-
-func _add_ore_patch(center: Vector2i, radius: Vector2i) -> void:
-	var min_x: int = max(0, center.x - radius.x)
-	var max_x: int = min(Config.GRID_COLUMNS - 1, center.x + radius.x)
-	var min_y: int = max(0, center.y - radius.y)
-	var max_y: int = min(Config.GRID_ROWS - 1, center.y + radius.y)
-
-	for y in range(min_y, max_y + 1):
-		for x in range(min_x, max_x + 1):
-			var cell := Vector2i(x, y)
-			var dx := float(x - center.x) / float(max(1, radius.x))
-			var dy := float(y - center.y) / float(max(1, radius.y))
-			var shape := dx * dx + dy * dy
-			var noisy := shape + _cell_noise(cell, 17) * 0.42
-
-			if noisy >= 1.05:
-				continue
-
-			resources[cell] = {
-				"cell": cell,
-				"amount": Config.ORE_BASE_AMOUNT + int(floor(_cell_noise(cell, 43) * float(Config.ORE_AMOUNT_VARIANCE))),
-				"phase": _cell_noise(cell, 71) * TAU,
-			}
-
-func _cell_noise(cell: Vector2i, salt: int) -> float:
-	var raw := cell.x * 928371 + cell.y * 689287 + salt * 283923
-	return float(posmod(raw, 1000)) / 1000.0
 
 func _is_cell_in_bounds(cell: Vector2i) -> bool:
 	return (

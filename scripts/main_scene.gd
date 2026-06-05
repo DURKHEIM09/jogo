@@ -146,7 +146,7 @@ func _update_hud() -> void:
 	var employee: Dictionary = factory_state.get_employee_report()
 	if factory_state.mode == Config.MODE_SHOP:
 		var report: Dictionary = factory_state.get_shop_report()
-		hud_label.text = "Modo: Loja   Creditos: %d   Estoque: %d   Base/Prem: %d/%d   Qualidade: %.2f   Melhor: %.2f   Preco: $%d\nDemanda: %s   Reputacao: %d   Clientes: %d/%d   Perdidos: %d   Receita loja: %d   Lucro: %d   Vendas: %d   Gargalo: %s\nNina: %s   Moral: %d   Conf.: %d%%   Folha: %d   Contrat.: %d   Custo: $%d/$%ds\nMercado NPC: Minerio $%d/$%d   Peca $%d/$%d   Premium fora: %d   Receita NPC: %d   %s" % [
+		hud_label.text = "Modo: Loja   Creditos: %d   Estoque: %d   Base/Prem: %d/%d   Qualidade: %.2f   Melhor: %.2f   Preco: $%d\nDemanda: %s   Reputacao: %d   Clientes: %d/%d   Perdidos: %d   Receita loja: %d   Lucro: %d   Vendas: %d   Gargalo: %s\nNina: %s   Moral: %d   Conf.: %d%%   Folha: %d   Contrat.: %d   Custo: $%d/$%ds\nMercado NPC: Minerio $%d/$%d   Peca $%d/$%d   Insumos: %d/$%d   Premium fora: %d   Receita NPC: %d   %s" % [
 			int(factory_state.money),
 			int(report["stock"]),
 			int(report["base_stock"]),
@@ -174,13 +174,15 @@ func _update_hud() -> void:
 			int(ore_quote["ask"]),
 			int(part_quote["bid"]),
 			int(part_quote["ask"]),
+			int(market["ore_bought"]),
+			int(market["input_spend"]),
 			int(market["premium_stock"]),
 			int(market["revenue"]),
 			last_action,
 		]
 		return
 
-	hud_label.text = "Modo: Fabrica   Creditos: %d   Pecas: %d   Loja: %d   Itens: %d   Energia: %d/%d   Taxa: %d/min   Ferramenta: %s $%d\nNina: %s   Moral: %d   Folha: %d   Contrat.: %d   Cap loja: %d\nMercado NPC: Minerio $%d/$%d   Peca $%d/$%d   Premium fora: %d   Receita NPC: %d   %s" % [
+	hud_label.text = "Modo: Fabrica   Creditos: %d   Pecas: %d   Loja: %d   Itens: %d   Energia: %d/%d   Taxa: %d/min   Ferramenta: %s $%d\nNina: %s   Moral: %d   Folha: %d   Contrat.: %d   Cap loja: %d   Insumos: %d/$%d\nMercado NPC: Minerio $%d/$%d   Peca $%d/$%d   Premium fora: %d   Receita NPC: %d   %s" % [
 		int(factory_state.money),
 		int(factory_state.parts),
 		factory_state.get_shop_stock(),
@@ -195,6 +197,8 @@ func _update_hud() -> void:
 		int(employee["salary_paid"]),
 		int(employee["hiring_paid"]),
 		factory_state.get_customer_capacity(),
+		int(market["ore_bought"]),
+		int(market["input_spend"]),
 		int(ore_quote["bid"]),
 		int(ore_quote["ask"]),
 		int(part_quote["bid"]),
@@ -217,7 +221,7 @@ func _tool_from_key(keycode: Key) -> String:
 		KEY_2:
 			return Config.TOOL_INSERTER
 		KEY_3:
-			return Config.TOOL_MINER
+			return Config.TOOL_BUYER
 		KEY_4:
 			return Config.TOOL_ASSEMBLER
 		KEY_5:
